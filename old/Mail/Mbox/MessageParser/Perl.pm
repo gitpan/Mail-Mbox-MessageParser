@@ -5,22 +5,19 @@ no strict;
 @ISA = qw( Exporter Mail::Mbox::MessageParser );
 
 use strict;
-use warnings 'all';
-no warnings 'redefine';
+use Mail::Mbox::MessageParser;
 
-our $VERSION = '1.01';
+use vars qw( $VERSION $DEBUG $FROM_PATTERN );
 
-our $DEBUG = 0;
+$VERSION = '1.02';
+
+*DEBUG = \$Mail::Mbox::MessageParser::DEBUG;
+*FROM_PATTERN = \$Mail::Mbox::MessageParser::FROM_PATTERN;
+*dprint = \&Mail::Mbox::MessageParser::dprint;
+sub dprint;
 
 # Need this for a lookahead.
-our $READ_CHUNK_SIZE = 20000;
-
-#-------------------------------------------------------------------------------
-
-sub dprint
-{
-  return Mail::Mbox::MessageParser::dprint @_;
-}
+my $READ_CHUNK_SIZE = 20000;
 
 #-------------------------------------------------------------------------------
 
@@ -34,28 +31,9 @@ sub new
 
   die "Need file_handle option" unless defined $options->{'file_handle'};
 
-  $self->{'CURRENT_LINE_NUMBER'} = 1;
-  $self->{'CURRENT_OFFSET'} = 0;
+  $self->{'file_handle'} = $options->{'file_handle'};
 
-  $self->{'file_handle'} = undef;
-  $self->{'file_handle'} = $options->{'file_handle'}
-    if exists $options->{'file_handle'};
-
-  # The buffer information.
-  $self->{'READ_BUFFER'} = '';
-  $self->{'START_OF_EMAIL'} = 0;
-  $self->{'END_OF_EMAIL'} = 0;
-
-  $self->{'end_of_file'} = 0;
-
-  # The line number of the last read email.
-  $self->{'email_line_number'} = 0;
-  # The offset of the last read email.
-  $self->{'email_offset'} = 0;
-  # The length of the last read email.
-  $self->{'email_length'} = 0;
-
-  $self->{'email_number'} = 0;
+  $self->reset();
 
   $self->{'file_name'} = $options->{'file_name'};
 
@@ -72,10 +50,18 @@ sub reset
 {
   my $self = shift;
 
-  seek $self->{'file_handle'}, length($self->{'prologue'}), 0;
-
-  $self->{'CURRENT_LINE_NUMBER'} = ($self->{'prologue'} =~ tr/\n//) + 1;
-  $self->{'CURRENT_OFFSET'} = length($self->{'prologue'});
+  if (defined $self->{'prologue'})
+  {
+    seek $self->{'file_handle'}, length($self->{'prologue'}), 0;
+    $self->{'CURRENT_LINE_NUMBER'} = ($self->{'prologue'} =~ tr/\n//) + 1;
+    $self->{'CURRENT_OFFSET'} = length($self->{'prologue'});
+  }
+  else
+  {
+    seek $self->{'file_handle'}, 0, 0;
+    $self->{'CURRENT_LINE_NUMBER'} = 1;
+    $self->{'CURRENT_OFFSET'} = 0;
+  }
 
   $self->{'READ_BUFFER'} = '';
   $self->{'START_OF_EMAIL'} = 0;
@@ -95,23 +81,23 @@ sub _read_prologue
 {
   my $self = shift;
 
-  dprint "Reading mailbox prologue with Perl";
+  dprint "Reading mailbox prologue";
 
   # Look for the start of the next email
   LOOK_FOR_FIRST_HEADER:
-# TODO: Fromline
-  if ($self->{'READ_BUFFER'} =~ m/^
-    (X-Draft-From:\s.*|X-From-Line:\s.*|
-    From\s
-      # Skip names, months, days
-      (?> [^:]+ ) 
-      # Match time
-      (?: :\d\d){1,2}
-      # Match time zone (EST), hour shift (+0500), and-or year
-      (?: \s+ (?: [A-Z]{2,3} | [+-]?\d{4} ) ){1,3}
-      # smail compatibility
-      (\sremote\sfrom\s.*)?
-    )$/xmg)
+#  if ($self->{'READ_BUFFER'} =~ m/^
+#    (X-Draft-From:\s.*|X-From-Line:\s.*|
+#    From\s
+#      # Skip names, months, days
+#      (?> [^:]+ ) 
+#      # Match time
+#      (?: :\d\d){1,2}
+#      # Match time zone (EST), hour shift (+0500), and-or year
+#      (?: \s+ (?: [A-Z]{2,3} | [+-]?\d{4} ) ){1,3}
+#      # smail compatibility
+#      (\sremote\sfrom\s.*)?
+#    )$/xmg)
+  if ($self->{'READ_BUFFER'} =~ m/$FROM_PATTERN/mg)
   {
     my $start_of_email = pos($self->{'READ_BUFFER'}) - length($1);
 
@@ -182,15 +168,6 @@ sub _read_prologue
 
 #-------------------------------------------------------------------------------
 
-sub prologue
-{
-  my $self = shift;
-
-  return $self->{'prologue'};
-}
-
-#-------------------------------------------------------------------------------
-
 sub read_next_email
 {
   my $self = shift;
@@ -204,18 +181,7 @@ sub read_next_email
 
   # Look for the start of the next email
   LOOK_FOR_NEXT_HEADER:
-  while ($self->{'READ_BUFFER'} =~ m/^
-    (X-Draft-From:\s.*|X-From-Line:\s.*|
-    From\s
-      # Skip names, months, days
-      (?> [^:]+ ) 
-      # Match time
-      (?: :\d\d){1,2}
-      # Match time zone (EST), hour shift (+0500), and-or year
-      (?: \s+ (?: [A-Z]{2,3} | [+-]?\d{4} ) ){1,3}
-      # smail compatibility
-      (\sremote\sfrom\s.*)?
-    )$/xmg)
+  while ($self->{'READ_BUFFER'} =~ m/$FROM_PATTERN/mg)
   {
     $self->{'END_OF_EMAIL'} = pos($self->{'READ_BUFFER'}) - length($1);
 
@@ -326,6 +292,7 @@ Mail::Mbox::MessageParser::Perl - A Perl-based mbox folder reader
       'file_handle' => $filehandle,
     } );
 
+  die $folder_reader unless ref $folder_reader;
   
   # Any newlines or such before the start of the first email
   my $prologue = $folder_reader->prologue;
@@ -362,6 +329,9 @@ the Mail::Mbox::MessageParser documentation.
 The constructor for the class takes two parameters. The optional I<file_name>
 parameter is the filename of the mailbox. The required I<file_handle> argument
 is the opened file handle to the mailbox. 
+
+Returns a reference to a Mail::Mbox::MessageParser object, or a string
+describing the error.
 
 
 =head1 BUGS
