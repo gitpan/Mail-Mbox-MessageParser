@@ -613,8 +613,9 @@ Mail::Mbox::MessageParser - A fast and simple mbox folder reader
   my $file_handle = new FileHandle($file_name);
 
   # Set up cache. (Not necessary if enable_cache is false.)
-  Mail::Mbox::MessageParser::SETUP_CACHE(
+  my $setup_result = Mail::Mbox::MessageParser::SETUP_CACHE(
     { 'file_name' => '/tmp/cache' } );
+  die $setup_result unless $setup_result eq 'ok';
 
   my $folder_reader =
     new Mail::Mbox::MessageParser( {
@@ -629,7 +630,7 @@ Mail::Mbox::MessageParser - A fast and simple mbox folder reader
   print $prologue;
 
   # This is the main loop. It's executed once for each email
-  while(!$folder_reader->end_of_file());
+  while(!$folder_reader->end_of_file())
   {
     my $email = $folder_reader->read_next_email();
     print $email;
