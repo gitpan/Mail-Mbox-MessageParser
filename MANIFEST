@@ -1,0 +1,57 @@
+anonymize_mailbox                     A tool to anonymize mailboxes
+README                                Read this first
+MANIFEST                              This file
+CHANGES                               A change history
+LICENSE                               A copy of the license
+Makefile.PL                           Makes the makefile
+lib/Mail/Mbox/MessageParser.pm        One of the module files
+lib/Mail/Mbox/MessageParser/Cache.pm  One of the module files
+lib/Mail/Mbox/MessageParser/Grep.pm   One of the module files
+lib/Mail/Mbox/MessageParser/Perl.pm   One of the module files
+lib/Test/CompareFiles.pm              A helper module used during testing
+old/Mail/Mbox/MessageParser.pm        The previous version of the module
+t/length.t                            Test program
+t/line_number.t                       Test program
+t/mail_archives.t                     Test program
+t/prologue.t                          Test program
+t/number.t                            Test program
+t/offset.t                            Test program
+t/reset.t                             Test program
+t/stdin.t                             Test program
+t/speed.pl                            A performance comparing program
+t/mailboxes/gnus.txt                  Test input file
+t/mailboxes/mailarc-1.txt             Test input file
+t/mailboxes/mailarc-2.txt             Test input file
+t/mailboxes/mailarc-3.txt             Test input file
+t/mailboxes/mailseparators.txt        Test input file
+t/mailboxes/newlines_at_beginning.txt Test input file
+t/results/length_gnus.realoutput                  Correct output file
+t/results/length_mailarc-1.realoutput             Correct output file
+t/results/length_mailarc-2.realoutput             Correct output file
+t/results/length_mailarc-3.realoutput             Correct output file
+t/results/length_mailseparators.realoutput        Correct output file
+t/results/length_newlines_at_beginning.realoutput Correct output file
+t/results/line_number_gnus.realoutput             Correct output file
+t/results/line_number_mailarc-1.realoutput        Correct output file
+t/results/line_number_mailarc-2.realoutput        Correct output file
+t/results/line_number_mailarc-3.realoutput        Correct output file
+t/results/line_number_mailseparators.realoutput   Correct output file
+t/results/line_number_newlines_at_beginning.realoutput Correct output file
+t/results/number_gnus.realoutput                  Correct output file
+t/results/number_mailarc-1.realoutput             Correct output file
+t/results/number_mailarc-2.realoutput             Correct output file
+t/results/number_mailarc-3.realoutput             Correct output file
+t/results/number_mailseparators.realoutput        Correct output file
+t/results/number_newlines_at_beginning.realoutput Correct output file
+t/results/offset_gnus.realoutput                  Correct output file
+t/results/offset_mailarc-1.realoutput             Correct output file
+t/results/offset_mailarc-2.realoutput             Correct output file
+t/results/offset_mailarc-3.realoutput             Correct output file
+t/results/offset_mailseparators.realoutput        Correct output file
+t/results/offset_newlines_at_beginning.realoutput Correct output file
+t/results/reset_gnus.realoutput                   Correct output file
+t/results/reset_mailarc-1.realoutput              Correct output file
+t/results/reset_mailarc-2.realoutput              Correct output file
+t/results/reset_mailarc-3.realoutput              Correct output file
+t/results/reset_mailseparators.realoutput         Correct output file
+t/results/reset_newlines_at_beginning.realoutput  Correct output file

@@ -1,0 +1,3 @@
+Version 1.0:
+- Initial version, with caching and grep support. Code taken from version 5.00
+  of grepmail
