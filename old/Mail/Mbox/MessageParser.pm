@@ -1,22 +1,20 @@
 package Mail::Mbox::MessageParser;
 
-no strict;
-
-@ISA = qw(Exporter);
-
 use strict;
 use Carp;
-use FileHandle;
-
+use FileHandle::Unget;
+use File::Spec;
 sub dprint;
 
 use Mail::Mbox::MessageParser::Perl;
 use Mail::Mbox::MessageParser::Grep;
 use Mail::Mbox::MessageParser::Cache;
 
-use vars qw( $VERSION $DEBUG $FROM_PATTERN $UPDATING_CACHE %PROGRAMS );
+use vars qw( @ISA $VERSION $DEBUG $FROM_PATTERN $UPDATING_CACHE %PROGRAMS );
 
-$VERSION = '1.10';
+@ISA = qw(Exporter);
+
+$VERSION = '1.12';
 $DEBUG = 0;
 
 %PROGRAMS = (
@@ -28,8 +26,10 @@ $DEBUG = 0;
  'bzip2' => '/usr/bin/bzip2',
 );
 
+# X-From-Line is used by Gnus, and From is used by normal Unix
+# format. Newer versions of Gnus use X-Draft-From
 $FROM_PATTERN = q/(?x)^
-    (X-Draft-From:\s.*|X-From-Line:\s.*|
+    (X-Draft-From:\s|X-From-Line:\s|
     From\s
       # Skip names, months, days
       (?> [^:]+ )
@@ -39,7 +39,7 @@ $FROM_PATTERN = q/(?x)^
       (?: \s+ (?: [A-Z]{2,3} | [+-]?\d{4} ) ){1,3}
       # smail compatibility
       (\sremote\sfrom\s.*)?
-    )$/;
+    )/;
 
 #-------------------------------------------------------------------------------
 
@@ -86,6 +86,9 @@ sub new
   }
 
   my ($file_type, $need_to_close_filehandle, $error);
+
+  $DEBUG = $options->{'debug'}
+    if defined $options->{'debug'};
 
   ($options->{'file_handle'}, $file_type, $need_to_close_filehandle, $error) =
     _PREPARE_FILE_HANDLE($options->{'file_name'}, $options->{'file_handle'});
@@ -150,9 +153,6 @@ sub new
 
   dprint "Instantiate mailbox parser implementation: " . ref $self;
 
-  $DEBUG = $options->{'debug'}
-    if defined $options->{'debug'};
-
   $self->_print_debug_information();
 
   $self->_read_prologue();
@@ -179,9 +179,17 @@ sub _PREPARE_FILE_HANDLE
   my $file_name = shift;
   my $file_handle = shift;
 
+  dprint "Preparing file handle";
+
   if (defined $file_handle)
   {
-    my $file_type = _GET_FILE_TYPE($file_handle);
+    # Promote this to a FileHandle::Unget if it isn't already
+    $file_handle = new FileHandle::Unget($file_handle)
+      unless UNIVERSAL::isa($file_handle, 'FileHandle::Unget');
+
+    binmode $file_handle;
+
+    my $file_type = _GET_FILE_TYPE(\$file_handle);
     dprint "Filehandle file type: $file_type";
 
     # Do decompression if we need to
@@ -194,7 +202,7 @@ sub _PREPARE_FILE_HANDLE
         unless defined $decompressed_file_handle;
 
       return ($decompressed_file_handle,$file_type,0,"Not a mailbox")
-        if _GET_FILE_TYPE($decompressed_file_handle) ne 'mailbox';
+        if _GET_FILE_TYPE(\$decompressed_file_handle) ne 'mailbox';
 
       return ($decompressed_file_handle,$file_type,0,undef);
     }
@@ -203,7 +211,7 @@ sub _PREPARE_FILE_HANDLE
       dprint "Filehandle is not compressed";
 
       return ($file_handle,$file_type,0,"No data on filehandle")
-        unless _DATA_ON_FILE_HANDLE($file_handle);
+        if eof($file_handle);
 
       return ($file_handle,$file_type,0,"Not a mailbox")
         if $file_type ne 'mailbox';
@@ -213,7 +221,7 @@ sub _PREPARE_FILE_HANDLE
   }
   else
   {
-    my $file_type = _GET_FILE_TYPE($file_name);
+    my $file_type = _GET_FILE_TYPE(\$file_name);
     dprint "Filename \"$file_name\" file type: $file_type";
 
     my ($opened_file_handle,$error) =
@@ -225,7 +233,7 @@ sub _PREPARE_FILE_HANDLE
     if (_IS_COMPRESSED_TYPE($file_type))
     {
       return ($opened_file_handle,$file_type,1,"Not a mailbox")
-        if _GET_FILE_TYPE($opened_file_handle) ne 'mailbox';
+        if _GET_FILE_TYPE(\$opened_file_handle) ne 'mailbox';
 
       return ($opened_file_handle,$file_type,1,undef);
     }
@@ -253,8 +261,10 @@ sub _OPEN_FILE_HANDLE
   # Non-compressed file
   unless (_IS_COMPRESSED_TYPE($file_type))
   {
-    my $file_handle = new FileHandle($file_name);
+    my $file_handle = new FileHandle::Unget($file_name);
     return (undef,"Can't open $file_name: $!") unless defined $file_handle;
+
+    binmode $file_handle;
 
     dprint "File \"$file_name\" is not compressed";
 
@@ -271,17 +281,19 @@ sub _OPEN_FILE_HANDLE
 
   use vars qw(*OLDSTDERR);
   open OLDSTDERR,">&STDERR" or die "Can't save STDERR: $!\n";
-  open STDERR,">/dev/null"
-    or die "Can't redirect STDERR to /dev/null: $!\n";
+  open STDERR,">" . File::Spec->devnull()
+    or die "Can't redirect STDERR to " . File::Spec->devnull() . ": $!\n";
 
-  my $file_handle = new FileHandle($filter_command);
+  my $file_handle = new FileHandle::Unget($filter_command);
+
+  binmode $file_handle;
 
   open STDERR,">&OLDSTDERR" or die "Can't restore STDERR: $!\n";
 
   return (undef,"Can't execute \"$filter_command\" for file \"$file_name\": $!")
     unless defined $file_handle;
 
-  unless (_DATA_ON_FILE_HANDLE($file_handle))
+  if (eof($file_handle))
   {
     $file_handle->close();
     return (undef,"Can't execute \"$filter_command\" for file \"$file_name\"");
@@ -296,38 +308,41 @@ sub _OPEN_FILE_HANDLE
 # bzip2, gzip, compress
 sub _GET_FILE_TYPE
 {
-  my $file_name_or_handle = shift;
+  my $file_name_or_handle_ref = shift;
 
   # Open the file if we need to
-  my $file_handle;
+  my $file_handle_ref;
   my $need_to_close_filehandle = 0;  
 
-  if (ref \$file_name_or_handle eq 'SCALAR')
+  if (ref $file_name_or_handle_ref eq 'SCALAR')
   {
-    $file_handle = new FileHandle($file_name_or_handle);
-    return 'unknown' unless defined $file_handle;
+    my $temp = new FileHandle::Unget($$file_name_or_handle_ref);
+    return 'unknown' unless defined $temp;
+    $file_handle_ref = \$temp;
 
     $need_to_close_filehandle = 1;
   }
   else
   {
-    $file_handle = $file_name_or_handle;
+    $file_handle_ref = $file_name_or_handle_ref;
   }
 
   
   # Read test characters
+  binmode $$file_handle_ref;
+
   my $testChars;
 
-  binmode $file_handle;
+  my $readResult = 1;
+  $readResult = read($$file_handle_ref,$testChars,2000)
+    unless defined $testChars;
 
-  my $readResult = read($file_handle,$testChars,2000);
-
-  $file_handle->close() if $need_to_close_filehandle;
+  $$file_handle_ref->close() if $need_to_close_filehandle;
 
   return 'unknown' unless defined $readResult && $readResult != 0;
 
-
-  _PUT_BACK_STRING($file_handle,$testChars) unless $need_to_close_filehandle;
+  $$file_handle_ref->ungets($testChars)
+    unless $need_to_close_filehandle;
 
   # Do -B on the data stream
   my $isBinary = 0;
@@ -374,6 +389,33 @@ sub _IS_COMPRESSED_TYPE
 
 #-------------------------------------------------------------------------------
 
+# man perlfork for details
+# simulate open(FOO, "-|")
+sub pipe_from_fork ($)
+{
+  my $parent = shift;
+  my $child = new FileHandle::Unget;
+
+  pipe $parent, $child or die;
+
+  my $pid = fork();
+  return undef unless defined $pid;
+
+  if ($pid)
+  {
+      close $child;
+  }
+  else
+  {
+      close $parent;
+      open(STDOUT, ">&=" . fileno($child)) or die;
+  }
+
+  return $pid;
+}
+
+#-------------------------------------------------------------------------------
+
 sub _DO_DECOMPRESSION
 {
   my $file_handle = shift;
@@ -387,8 +429,8 @@ sub _DO_DECOMPRESSION
   dprint "Calling \"$filter_command\" to decompress filehandle";
 
   # Implicit fork
-  my $decompressed_file_handle = new FileHandle;
-  my $pid = $decompressed_file_handle->open('-|');
+  my $decompressed_file_handle = new FileHandle::Unget;
+  my $pid = pipe_from_fork($decompressed_file_handle);
 
   unless (defined($pid))
   {
@@ -403,8 +445,10 @@ sub _DO_DECOMPRESSION
   # uncompressed input.
   unless ($pid)
   {
-    open(FRONT_OF_PIPE, "|$filter_command 2>/dev/null")
+    open(FRONT_OF_PIPE, "|$filter_command 2>" . File::Spec->devnull())
       or return (undef,"Can't execute \"$filter_command\" on file handle: $!");
+
+    binmode FRONT_OF_PIPE;
 
     print FRONT_OF_PIPE <$file_handle>;
 
@@ -419,40 +463,10 @@ sub _DO_DECOMPRESSION
     exit;
   }
 
+  binmode $decompressed_file_handle;
+
   # In parent
   return ($decompressed_file_handle,undef);
-}
-
-#-------------------------------------------------------------------------------
-
-# Checks to see if there is data on a filehandle, without reading that data.
-
-sub _DATA_ON_FILE_HANDLE
-{
-  my $file_handle = shift;
-
-  my $buffer = <$file_handle>;
-
-  return 0 unless defined $buffer;
-
-  _PUT_BACK_STRING($file_handle,$buffer);
-
-  return $buffer ? 1 : 0;
-}
-
-#-------------------------------------------------------------------------------
-
-# Puts a string back on a file handle
-
-sub _PUT_BACK_STRING
-{
-  my $file_handle = shift;
-  my $string = shift;
-
-  for (my $char_position=CORE::length($string)-1;$char_position >=0; $char_position--)
-  {
-    $file_handle->ungetc(ord(substr($string,$char_position,1)));
-  }
 }
 
 #-------------------------------------------------------------------------------
@@ -466,10 +480,8 @@ sub _IS_MAILBOX
 {
   my $test_characters = shift;
 
-  # X-From-Line is used by Gnus, and From is used by normal Unix
-  # format. Newer versions of Gnus use X-Draft-From
   if ($test_characters =~ /$FROM_PATTERN/im &&
-      $test_characters =~ /^Received:.*\bfrom\b.*\bby\b.*for\b/sm)
+      $test_characters =~ /^(Received[ :]|Date:|Subject:|X-Status:|Status:|To:)/sm)
   {
     return 1;
   }
@@ -613,9 +625,8 @@ Mail::Mbox::MessageParser - A fast and simple mbox folder reader
   my $file_handle = new FileHandle($file_name);
 
   # Set up cache. (Not necessary if enable_cache is false.)
-  my $setup_result = Mail::Mbox::MessageParser::SETUP_CACHE(
+  Mail::Mbox::MessageParser::SETUP_CACHE(
     { 'file_name' => '/tmp/cache' } );
-  die $setup_result unless $setup_result eq 'ok';
 
   my $folder_reader =
     new Mail::Mbox::MessageParser( {
