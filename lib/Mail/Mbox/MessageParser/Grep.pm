@@ -10,11 +10,12 @@ use Carp;
 use Mail::Mbox::MessageParser;
 use Mail::Mbox::MessageParser::Config;
 
-use vars qw( $VERSION $DEBUG $GREP_DATA );
+use vars qw( $VERSION $DEBUG );
+use vars qw( $CACHE );
 
-$VERSION = sprintf "%d.%02d%02d", q/1.50.30/ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%02d%02d", q/1.60.0/ =~ /(\d+)/g;
 
-$GREP_DATA = {};
+*CACHE = \$Mail::Mbox::MessageParser::MetaInfo::CACHE;
 
 *DEBUG = \$Mail::Mbox::MessageParser::DEBUG;
 *dprint = \&Mail::Mbox::MessageParser::dprint;
@@ -24,69 +25,47 @@ sub dprint;
 
 sub new
 {
-  my ($proto, $options) = @_;
+  my ($proto, $self) = @_;
 
-  my $class = ref($proto) || $proto;
-  my $self  = {};
-  bless ($self, $class);
-
-  carp "Need file_name option" unless defined $options->{'file_name'};
-  carp "Need file_handle option" unless defined $options->{'file_handle'};
+  carp "Need file_name option" unless defined $self->{'file_name'};
+  carp "Need file_handle option" unless defined $self->{'file_handle'};
 
   return "GNU grep not installed"
     unless defined $Mail::Mbox::MessageParser::Config{'programs'}{'grep'};
 
-  $self->{'file_handle'} = undef;
-  $self->{'file_handle'} = $options->{'file_handle'}
-    if exists $options->{'file_handle'};
+  bless ($self, __PACKAGE__);
 
-  $self->{'file_name'} = $options->{'file_name'};
-  $self->{'file_name'} = $options->{'file_name'};
-
-  $self->reset();
-
-  _READ_GREP_DATA($self->{'file_name'})
-    unless defined $GREP_DATA->{$self->{'file_name'}};
-
-  return "Couldn't read grep data"
-    unless defined $GREP_DATA->{$self->{'file_name'}};
+  $self->_init();
 
   return $self;
 }
 
 #-------------------------------------------------------------------------------
 
-sub reset
+sub _init
 {
   my $self = shift;
 
-  seek $self->{'file_handle'}, length($self->{'prologue'}), 0
-    if defined $self->{'file_handle'} && defined $self->{'prologue'};
+  $self->SUPER::_init();
 
-  $self->{'end_of_file'} = 0;
-
-  $self->{'email_line_number'} = 0;
-  $self->{'email_offset'} = 0;
-  $self->{'email_length'} = 0;
-  $self->{'email_number'} = 0;
+  $self->_initialize_cache_entry();
 }
 
 #-------------------------------------------------------------------------------
 
-sub _read_prologue
+sub _initialize_cache_entry
 {
   my $self = shift;
+    
+  my @stat = stat $self->{'file_name'};
+      
+  my $size = $stat[7];
+  my $time_stamp = $stat[9];
 
-  dprint "Reading mailbox prologue using grep";
-
-  my $prologue_length = $GREP_DATA->{$self->{'file_name'}}{'offsets'}[0];
-  my $bytes_read = 0;
-
-  do
-  {
-    $bytes_read += read($self->{'file_handle'}, $self->{'prologue'},
-      $prologue_length-$bytes_read, $bytes_read);
-  } while ($bytes_read != $prologue_length);
+  $CACHE->{$self->{'file_name'}}{'size'} = $size;
+  $CACHE->{$self->{'file_name'}}{'time_stamp'} = $time_stamp;
+  $CACHE->{$self->{'file_name'}}{'emails'} =
+    _READ_GREP_DATA($self->{'file_name'});
 }
 
 #-------------------------------------------------------------------------------
@@ -101,8 +80,8 @@ sub _READ_GREP_DATA
 
   {
     my @grep_results;
-    
-    @grep_results = `$Mail::Mbox::MessageParser::Config{'programs'}{'grep'} --extended-regexp --line-number --byte-offset --binary-files=text "^(X-Draft-From: .*|X-From-Line: .*|From [^:]+(:[0-9][0-9]){1,2} ([A-Z]{2,3} [0-9]{4}|[0-9]{4} [+-][0-9]{4}|[0-9]{4})( remote from .*)?)\r?\$" "$filename"`;
+
+    @grep_results = `$Mail::Mbox::MessageParser::Config{'programs'}{'grep'} --extended-regexp --line-number --byte-offset --binary-files=text "^(X-Draft-From: .*|X-From-Line: .*|From [^:]+(:[0-9][0-9]){1,2}(  *([A-Z]{2,3}|[+-]?[0-9]{4})){1,3}( remote from .*)?)\r?\$" "$filename"`;
 
     dprint "Read " . scalar(@grep_results) . " lines of grep data";
 
@@ -114,28 +93,50 @@ sub _READ_GREP_DATA
     }
   }
 
+  my @emails;
+
   for(my $match_number = 0; $match_number <= $#lines_and_offsets; $match_number++)
   {
     if ($match_number == $#lines_and_offsets)
     {
-      my $filesize = -s $filename; $GREP_DATA->{$filename}{'lengths'}[$match_number] =
+      my $filesize = -s $filename;
+      $emails[$match_number]{'length'} =
         $filesize - $lines_and_offsets[$match_number]{'byte offset'};
     }
     else
     {
-      $GREP_DATA->{$filename}{'lengths'}[$match_number] =
+      $emails[$match_number]{'length'} =
         $lines_and_offsets[$match_number+1]{'byte offset'} -
         $lines_and_offsets[$match_number]{'byte offset'};
     }
 
-    $GREP_DATA->{$filename}{'line_numbers'}[$match_number] =
+    $emails[$match_number]{'line_number'} =
       $lines_and_offsets[$match_number]{'line number'};
 
-    $GREP_DATA->{$filename}{'offsets'}[$match_number] =
+    $emails[$match_number]{'offset'} =
       $lines_and_offsets[$match_number]{'byte offset'};
 
-    $GREP_DATA->{$filename}{'validated'}[$match_number] = 0;
+    $emails[$match_number]{'validated'} = 0;
   }
+
+  return \@emails;
+}
+
+#-------------------------------------------------------------------------------
+
+sub _read_prologue
+{
+  my $self = shift;
+
+  dprint "Reading mailbox prologue using grep";
+
+  my $prologue_length = $CACHE->{$self->{'file_name'}}{'emails'}[0]{'offset'};
+
+  my $bytes_read = 0;
+  do {
+    $bytes_read += read($self->{'file_handle'}, $self->{'prologue'},
+      $prologue_length-$bytes_read, $bytes_read);
+  } while ($bytes_read != $prologue_length);
 }
 
 #-------------------------------------------------------------------------------
@@ -145,18 +146,18 @@ sub read_next_email
   my $self = shift;
 
   $self->{'email_line_number'} =
-    $GREP_DATA->{$self->{'file_name'}}{'line_numbers'}[$self->{'email_number'}];
+    $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'line_number'};
   $self->{'email_offset'} =
-    $GREP_DATA->{$self->{'file_name'}}{'offsets'}[$self->{'email_number'}];
+    $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'offset'};
 
   my $email = '';
 
   LOOK_FOR_NEXT_EMAIL:
   while ($self->{'email_number'} <=
-      $#{$GREP_DATA->{$self->{'file_name'}}{'lengths'}})
+      $#{$CACHE->{$self->{'file_name'}}{'emails'}})
   {
     $self->{'email_length'} =
-      $GREP_DATA->{$self->{'file_name'}}{'lengths'}[$self->{'email_number'}];
+      $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'length'};
 
     {
       my $bytes_read = length($email);
@@ -167,7 +168,7 @@ sub read_next_email
     }
 
     last LOOK_FOR_NEXT_EMAIL
-      if $GREP_DATA->{$self->{'file_name'}}{'validated'}[$self->{'email_number'}];
+      if $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'validated'};
 
     my $endline = $self->{'endline'};
 
@@ -185,47 +186,33 @@ sub read_next_email
     if ($end_of_string =~
         /$endline-----(?: Begin Included Message |Original Message)-----$endline[^\r\n]*(?:$endline)*$/i ||
         $end_of_string =~
-          /$endline--[^\r\n]*${endline}Content-type:[^\r\n]*$endline$endline/i)
+          /$endline--[^\r\n]*${endline}Content-type:[^\r\n]*$endline(?:$endline)+$/i)
     {
-      dprint "Incorrect start of email found--adjusting grep data";
+      dprint "Incorrect start of email found--adjusting cache data";
 
-      $GREP_DATA->{$self->{'file_name'}}{'lengths'}[$self->{'email_number'}] +=
-        $GREP_DATA->{$self->{'file_name'}}{'lengths'}[$self->{'email_number'}+1];
+      $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'length'} +=
+        $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}+1]{'length'};
 
-      my $last_email_index = $#{$GREP_DATA->{$self->{'file_name'}}{'lengths'}};
+      my $last_email_index = $#{$CACHE->{$self->{'file_name'}}{'emails'}};
 
       if($self->{'email_number'}+2 <= $last_email_index)
       {
-        @{$GREP_DATA->{$self->{'file_name'}}{'lengths'}}
+        @{$CACHE->{$self->{'file_name'}}{'emails'}}
           [$self->{'email_number'}+1..$last_email_index-1] =
-            @{$GREP_DATA->{$self->{'file_name'}}{'lengths'}}
-            [$self->{'email_number'}+2..$last_email_index];
-
-        @{$GREP_DATA->{$self->{'file_name'}}{'line_numbers'}}
-          [$self->{'email_number'}+1..$last_email_index-1] =
-            @{$GREP_DATA->{$self->{'file_name'}}{'line_numbers'}}
-            [$self->{'email_number'}+2..$last_email_index];
-
-        @{$GREP_DATA->{$self->{'file_name'}}{'offsets'}}
-          [$self->{'email_number'}+1..$last_email_index-1] =
-            @{$GREP_DATA->{$self->{'file_name'}}{'offsets'}}
+            @{$CACHE->{$self->{'file_name'}}{'emails'}}
             [$self->{'email_number'}+2..$last_email_index];
       }
 
-      pop @{$GREP_DATA->{$self->{'file_name'}}{'lengths'}};
-      pop @{$GREP_DATA->{$self->{'file_name'}}{'line_numbers'}};
-      pop @{$GREP_DATA->{$self->{'file_name'}}{'offsets'}};
+      pop @{$CACHE->{$self->{'file_name'}}{'emails'}};
     }
     else
     {
-      $GREP_DATA->{$self->{'file_name'}}{'validated'}[$self->{'email_number'}] = 1;
+      $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'validated'} = 1;
       last LOOK_FOR_NEXT_EMAIL;
     }
   }
 
-  $self->{'end_of_file'} = 1
-    if $self->{'email_number'} == 
-      $#{$GREP_DATA->{$self->{'file_name'}}{'lengths'}};
+  $self->{'end_of_file'} = 1 if eof $self->{'file_handle'};
 
   $self->{'email_number'}++;
 
@@ -248,16 +235,16 @@ Mail::Mbox::MessageParser::Grep - A GNU grep-based mbox folder reader
 
   #!/usr/bin/perl
 
-  use Mail::Mbox::MessageParser::Grep;
+  use Mail::Mbox::MessageParser;
 
   my $filename = 'mail/saved-mail';
   my $filehandle = new FileHandle($filename);
 
   my $folder_reader =
-    new Mail::Mbox::MessageParser::Grep( {
+    new Mail::Mbox::MessageParser( {
       'file_name' => $filename,
       'file_handle' => $filehandle,
-      'file_handle' => $filehandle,
+      'enable_grep' => 1,
     } );
 
   die $folder_reader unless ref $folder_reader;
@@ -276,10 +263,9 @@ Mail::Mbox::MessageParser::Grep - A GNU grep-based mbox folder reader
 =head1 DESCRIPTION
 
 This module implements a GNU grep-based mbox folder reader. It can only be
-used when GNU grep is installed on the system. Users are encouraged to use
-Mail::Mbox::MessageParser instead. The base MessageParser module will
-automatically fall back to another reader implementation if this module can
-not be used.
+used when GNU grep is installed on the system. Users must not instantiate this
+class directly--use Mail::Mbox::MessageParser instead. The base MessageParser
+module will automatically manage the use of grep and non-grep implementations.
 
 =head2 METHODS AND FUNCTIONS
 
@@ -301,6 +287,8 @@ handle to the mailbox. Both arguments are required.
 
 Returns a reference to a Mail::Mbox::MessageParser object, or a string
 describing the error.
+
+=back
 
 
 =head1 BUGS

@@ -6,9 +6,6 @@ use Test::More;
 use lib 't';
 use Mail::Mbox::MessageParser;
 use Mail::Mbox::MessageParser::Config;
-use Mail::Mbox::MessageParser::Cache;
-use Mail::Mbox::MessageParser::Grep;
-use Mail::Mbox::MessageParser::Perl;
 use File::Spec::Functions qw(:ALL);
 use Test::Utils;
 use FileHandle;
@@ -16,7 +13,7 @@ use FileHandle;
 eval 'require Storable;';
 
 my %tests = (
-  "t/mailboxes/separators1.sep" => 1,
+  "t/mailboxes/separators1.sep" => 2,
 );
 
 mkdir catfile('t','temp'), 0700;
@@ -58,7 +55,7 @@ sub TestImplementation
   my $testname = [splitdir($0)]->[-1];
   $testname =~ s#\.t##;
 
-  my ($folder_name) = $filename =~ /\/([^\/\\]*)\.txt$/;
+  my ($folder_name) = $filename =~ /\/([^\/\\]*)\..*?$/;
 
   my $output_filename = catfile('t','temp',
     "${testname}_${folder_name}_${enable_cache}_${enable_grep}.stdout");

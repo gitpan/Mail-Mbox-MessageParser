@@ -5,13 +5,14 @@ no strict;
 @ISA = qw( Exporter Mail::Mbox::MessageParser );
 
 use strict;
+use Carp;
 
 use Mail::Mbox::MessageParser;
 use Mail::Mbox::MessageParser::Config;
 
 use vars qw( $VERSION $DEBUG );
 
-$VERSION = sprintf "%d.%02d%02d", q/1.40.30/ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%02d%02d", q/1.50.0/ =~ /(\d+)/g;
 
 *DEBUG = \$Mail::Mbox::MessageParser::DEBUG;
 *dprint = \&Mail::Mbox::MessageParser::dprint;
@@ -21,27 +22,34 @@ sub dprint;
 
 sub new
 {
-  my ($proto, $options) = @_;
+  my ($proto, $self) = @_;
 
-  my $class = ref($proto) || $proto;
-  my $self  = {};
-  bless ($self, $class);
+  carp "Need file_handle option" unless defined $self->{'file_handle'};
 
-  die "Need file_handle option" unless defined $options->{'file_handle'};
+  bless ($self, __PACKAGE__);
 
-  $self->{'file_handle'} = $options->{'file_handle'};
+  $self->_init();
 
-  $self->reset();
+  return $self;
+}
 
-  $self->{'file_name'} = $options->{'file_name'}
-    if defined $options->{'file_name'};
+#-------------------------------------------------------------------------------
+
+sub _init
+{
+  my $self = shift;
 
   $self->{'READ_CHUNK_SIZE'} =
     $Mail::Mbox::MessageParser::Config{'read_chunk_size'};
 
-  $self->_print_debug_information();
+  $self->{'CURRENT_LINE_NUMBER'} = 1;
+  $self->{'CURRENT_OFFSET'} = 0;
 
-  return $self;
+  $self->{'READ_BUFFER'} = '';
+  $self->{'START_OF_EMAIL'} = 0;
+  $self->{'END_OF_EMAIL'} = 0;
+
+  $self->SUPER::_init();
 }
 
 #-------------------------------------------------------------------------------
@@ -50,55 +58,14 @@ sub reset
 {
   my $self = shift;
 
-  if (defined $self->{'prologue'})
-  {
-    if (_IS_A_PIPE($self->{'file_handle'}))
-    {
-      dprint "Avoiding seek() on a pipe";
-    }
-    else
-    {
-      seek $self->{'file_handle'}, length($self->{'prologue'}), 0
-    }
-
-    $self->{'CURRENT_LINE_NUMBER'} = ($self->{'prologue'} =~ tr/\n//) + 1;
-    $self->{'CURRENT_OFFSET'} = length($self->{'prologue'});
-  }
-  else
-  {
-    if (_IS_A_PIPE($self->{'file_handle'}))
-    {
-      dprint "Avoiding seek() on a pipe";
-    }
-    else
-    {
-      seek $self->{'file_handle'}, 0, 0;
-    }
-
-    $self->{'CURRENT_LINE_NUMBER'} = 1;
-    $self->{'CURRENT_OFFSET'} = 0;
-  }
+  $self->{'CURRENT_LINE_NUMBER'} = ($self->{'prologue'} =~ tr/\n//) + 1;
+  $self->{'CURRENT_OFFSET'} = length($self->{'prologue'});
 
   $self->{'READ_BUFFER'} = '';
   $self->{'START_OF_EMAIL'} = 0;
   $self->{'END_OF_EMAIL'} = 0;
 
-  $self->{'end_of_file'} = 0;
-
-  $self->{'email_line_number'} = 0;
-  $self->{'email_offset'} = 0;
-  $self->{'email_length'} = 0;
-  $self->{'email_number'} = 0;
-}
-
-#-------------------------------------------------------------------------------
-
-sub _IS_A_PIPE
-{
-  my $file_handle = shift;
-
-  return (-t $file_handle || -S $file_handle || -p $file_handle ||
-    !-f $file_handle || !(seek $file_handle, 0, 1));
+  $self->SUPER::reset();
 }
 
 #-------------------------------------------------------------------------------
@@ -107,7 +74,7 @@ sub _read_prologue
 {
   my $self = shift;
 
-  dprint "Reading mailbox prologue";
+  dprint "Reading mailbox prologue using Perl";
 
   # Look for the start of the next email
   LOOK_FOR_FIRST_HEADER:
@@ -187,8 +154,6 @@ sub read_next_email
 {
   my $self = shift;
 
-  dprint "Using Perl" if $DEBUG;
-
   $self->{'email_line_number'} = $self->{'CURRENT_LINE_NUMBER'};
   $self->{'email_offset'} = $self->{'CURRENT_OFFSET'};
 
@@ -222,7 +187,7 @@ sub read_next_email
         /$endline-----(?: Begin Included Message |Original Message)-----$endline[^\r\n]*(?:$endline)*$/i;
 
     next if $end_of_string =~
-      /$endline--[^\r\n]*${endline}Content-type:[^\r\n]*$endline$endline/i;
+      /$endline--[^\r\n]*${endline}Content-type:[^\r\n]*$endline(?:$endline)+$/i;
 
     # Found the next email!
     $self->{'email_length'} = $self->{'END_OF_EMAIL'}-$self->{'START_OF_EMAIL'};
@@ -311,13 +276,13 @@ Mail::Mbox::MessageParser::Perl - A Perl-based mbox folder reader
 
   #!/usr/bin/perl
 
-  use Mail::Mbox::MessageParser::Perl;
+  use Mail::Mbox::MessageParser;
 
   my $filename = 'mail/saved-mail';
   my $filehandle = new FileHandle($filename);
 
   my $folder_reader =
-    new Mail::Mbox::MessageParser::Perl( {
+    new Mail::Mbox::MessageParser( {
       'file_name' => $filename,
       'file_handle' => $filehandle,
     } );
@@ -337,10 +302,10 @@ Mail::Mbox::MessageParser::Perl - A Perl-based mbox folder reader
 
 =head1 DESCRIPTION
 
-This module implements a perl-based mbox folder reader. Users are encouraged
-to use Mail::Mbox::MessageParser instead. The base MessageParser module will
-automatically use a faster implementation is one is available. (Although you
-can just use this module if you don't want to use caching or GNU grep.)
+This module implements a Perl-based mbox folder reader.  Users must not
+instantiate this class directly--use Mail::Mbox::MessageParser instead. The
+base MessageParser module will automatically manage the use of faster
+implementations if they can be used.
 
 =head2 METHODS AND FUNCTIONS
 
@@ -362,6 +327,8 @@ is the opened file handle to the mailbox.
 
 Returns a reference to a Mail::Mbox::MessageParser object, or a string
 describing the error.
+
+=back
 
 
 =head1 BUGS

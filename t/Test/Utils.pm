@@ -9,6 +9,7 @@ use File::Spec::Functions qw(:ALL);
 
 use vars qw( @EXPORT @ISA );
 use Mail::Mbox::MessageParser;
+use Mail::Mbox::MessageParser::MetaInfo;
 
 @ISA = qw( Exporter );
 @EXPORT = qw( CheckDiffs InitializeCache ModuleInstalled
@@ -33,7 +34,7 @@ sub CheckDiffs
     my @diffs;
     diff $output_filename, $filename, { STYLE => 'OldStyle', OUTPUT => \@diffs };
 
-    my $numdiffs = grep { /^\d+[cd]\d+$/ } @diffs;
+    my $numdiffs = grep { /^[\d,]+[acd][\d,]+$/ } @diffs;
 
     if ($numdiffs != 0)
     {
@@ -67,7 +68,7 @@ sub InitializeCache
   my $cache_file = catfile('t','temp','cache');
 
   Mail::Mbox::MessageParser::SETUP_CACHE({'file_name' => $cache_file});
-  Mail::Mbox::MessageParser::CLEAR_CACHE();
+  Mail::Mbox::MessageParser::MetaInfo::CLEAR_CACHE();
 
   my $filehandle = new FileHandle::Unget($filename);
 
@@ -91,7 +92,10 @@ sub InitializeCache
 
   $filehandle->close();
 
-  Mail::Mbox::MessageParser::WRITE_CACHE();
+  Mail::Mbox::MessageParser::MetaInfo::WRITE_CACHE();
+
+  # Check that the cache is actually there
+  die "Couldn't initialize cache" unless -e $cache_file;
 }
 
 # ---------------------------------------------------------------------------
@@ -146,7 +150,7 @@ sub Broken_Pipe
   print F<<EOF;
 unless (open B, '-|')
 {
-  open(F, "|cat 2>$dev_null");
+  open(F, "|$^X -pe 'print' 2>$dev_null");
   print F 'x';
   close F;
   exit;

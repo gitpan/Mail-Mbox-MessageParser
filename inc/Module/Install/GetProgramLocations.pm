@@ -4,6 +4,7 @@ package Module::Install::GetProgramLocations;
 use strict;
 use Config;
 use Cwd;
+use Carp;
 use File::Spec;
 use Sort::Versions;
 use Exporter();
@@ -13,10 +14,11 @@ use vars qw( @ISA $VERSION @EXPORT );
 use Module::Install::Base;
 @ISA = qw( Module::Install::Base Exporter );
 
-@EXPORT = qw( &Get_GNU_GPP_Version &Get_GNU_Grep_Version
-              &Get_GNU_Make_Version &Get_Bzip2_Version );
+@EXPORT = qw( &Get_GNU_Version
+              &Get_Bzip2_Version
+            );
 
-$VERSION = sprintf "%d.%02d%02d", q/0.10.20/ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%02d%02d", q/0.30.0/ =~ /(\d+)/g;
 
 # ---------------------------------------------------------------------------
 
@@ -25,6 +27,12 @@ sub Get_Program_Locations
   my $self = shift;
   my %info = %{ shift @_ };
 
+  foreach my $program (keys %info)
+  {
+    croak "argname is required for $program"
+      unless defined $info{$program}{'argname'};
+  }
+
   # Module::Install says it requires perl 5.004
   $self->requires( perl => '5.004' );
   $self->include_deps('Config',0);
@@ -32,18 +40,57 @@ sub Get_Program_Locations
   $self->include_deps('Sort::Versions',0);
   $self->include_deps('Cwd',0);
 
-  # By default the programs have no paths
-  my %programs = map { $_ => undef } keys %info;
+  my %user_specified_program_paths =
+    $self->_Get_User_Specified_Program_Locations(\%info);
 
-  my ($programs_ref,$program_specified_on_command_line) =
-    $self->_Get_ARGV_Program_Locations(\%programs,\%info);
-  %programs = %$programs_ref;
+  if (keys %user_specified_program_paths)
+  {
+    return $self->_Get_ARGV_Program_Locations(\%info,
+      \%user_specified_program_paths);
+  }
+  else
+  {
+    return $self->_Prompt_User_For_Program_Locations(\%info);
+  }
+}
 
-  return %programs if $program_specified_on_command_line;
+# ---------------------------------------------------------------------------
 
-  %programs = $self->_Prompt_User_For_Program_Locations(\%programs,\%info);
+sub _Get_User_Specified_Program_Locations
+{
+  my $self = shift;
+  my %info = %{ shift @_ };
 
-  return %programs;
+  my %user_specified_program_paths;
+  my @remaining_args;
+
+  # Look for user-provided paths in @ARGV
+  foreach my $arg (@ARGV)
+  {
+    my ($var,$value) = $arg =~ /^(.*?)=(.*)$/;
+
+    push(@remaining_args, $arg), next unless defined $var;
+
+    $value = undef if $value eq '';
+
+    my $is_a_program_arg = 0;
+
+    foreach my $program (keys %info)
+    {
+      if ($var eq $info{$program}{'argname'})
+      {
+        $user_specified_program_paths{$program} = $value;
+        $is_a_program_arg = 1;
+        last;
+      }
+    }
+
+    push @remaining_args, $arg unless $is_a_program_arg;
+  }
+
+  @ARGV = @remaining_args;
+
+  return %user_specified_program_paths;
 }
 
 # ---------------------------------------------------------------------------
@@ -51,43 +98,48 @@ sub Get_Program_Locations
 sub _Get_ARGV_Program_Locations
 {
   my $self = shift;
-  my %programs = %{ shift @_ };
   my %info = %{ shift @_ };
+  my %program_locations = %{ shift @_ };
 
-  my $program_specified_on_command_line = 0;
-  my @remaining_args;
+  my %program_info;
 
-  # Look for user-provided paths in @ARGV
-  foreach my $arg (@ARGV)
+  foreach my $program_name (sort keys %info)
   {
-    my ($var,$value) = $arg =~ /^(.*?)=(.*)$/;
-    $value = undef if $value eq '';
+    $program_info{$program_name} = 
+      { 'path' => undef, 'type' => undef, 'version' => undef };
 
-    if (!defined $var)
+    next if exists $program_locations{$program_name} &&
+      $program_locations{$program_name} eq '';
+
+    $program_locations{$program_name} = $info{$program_name}{'default'}
+      unless exists $program_locations{$program_name};
+
+    my $full_path = $self->_Make_Absolute($program_locations{$program_name});
+    if (!defined $self->can_run($full_path))
     {
-      push @remaining_args, $arg;
+      warn "\"$full_path\" does not appear to be a valid executable\n";
+      warn "Using anyway\n";
+
+      $program_info{$program_name} =
+        { path => $full_path, type => undef, version => undef };
     }
     else
     {
-      my $is_a_program_arg = 0;
-
-      foreach my $program (keys %info)
+      my ($is_valid,$type,$version) = 
+        $self->_Program_Version_Is_Valid($program_name,$full_path,\%info);
+      
+      unless($is_valid)
       {
-        if ($var eq $info{$program}{'argname'})
-        {
-          $programs{$program} = $value;
-          $program_specified_on_command_line = 1;
-          $is_a_program_arg = 1;
-        }
+        warn "\"$full_path\" is not a correct version\n";
+        warn "Using anyway\n";
       }
 
-      push @remaining_args, $arg unless $is_a_program_arg;
+      $program_info{$program_name} =
+        { path => $full_path, type => $type, version => $version };
     }
   }
 
-  @ARGV = @remaining_args;
-
-  return (\%programs,$program_specified_on_command_line);
+  return %program_info;
 }
 
 # ---------------------------------------------------------------------------
@@ -95,16 +147,15 @@ sub _Get_ARGV_Program_Locations
 sub _Prompt_User_For_Program_Locations
 {
   my $self = shift;
-  my %programs = %{ shift @_ };
   my %info = %{ shift @_ };
-
-  my @path = split /$Config{path_sep}/, $ENV{PATH};
 
   print "Enter the full path, or \"none\" for none.\n";
 
   my $last_choice = '';
 
-  ASK: foreach my $program_name (sort keys %programs)
+  my %program_info;
+
+  ASK: foreach my $program_name (sort keys %info)
   {
     my ($name,$full_path);
 
@@ -120,32 +171,34 @@ sub _Prompt_User_For_Program_Locations
 
     $full_path = 'none' if !defined $full_path || $name eq '';
 
-    my $allowed_versions = '';
-    if (exists $info{$program_name}{'versions'})
+    my $allowed_types = '';
+    if (exists $info{$program_name}{'types'})
     {
-      foreach my $type (keys %{ $info{$program_name}{'versions'} } )
+      foreach my $type (keys %{ $info{$program_name}{'types'} } )
       {
-        $allowed_versions .= ", $type";
+        $allowed_types .= ", $type";
       }
 
-      $allowed_versions =~ s/^, //;
-      $allowed_versions =~ s/(.*), /$1, or /;
-      $allowed_versions = " ($allowed_versions";
-      $allowed_versions .=
-        scalar(keys %{ $info{$program_name}{'versions'} }) > 1 ?
-        " versions)" : " version)";
+      $allowed_types =~ s/^, //;
+      $allowed_types =~ s/(.*), /$1, or /;
+      $allowed_types = " ($allowed_types";
+      $allowed_types .= scalar(keys %{ $info{$program_name}{'types'} }) > 1 ?
+        " types)" : " type)";
     }
 
     my $choice = $self->prompt(
-      "Where can I find your \"$program_name\" executable?$allowed_versions" => $full_path);
+      "Where can I find your \"$program_name\" executable?" .
+      "$allowed_types" => $full_path);
 
-    $programs{$program_name} = undef, next if $choice eq 'none';
+    $program_info{$program_name} =
+      { path => undef, type => undef, version => undef }, next
+      if $choice eq 'none';
 
     $choice = $self->_Make_Absolute($choice);
 
     if (!defined $self->can_run($choice))
     {
-      print "\"$choice\" does not appear to be a valid executable\n";
+      warn "\"$choice\" does not appear to be a valid executable\n";
 
       if ($last_choice ne $choice)
       {
@@ -153,25 +206,32 @@ sub _Prompt_User_For_Program_Locations
         redo ASK;
       }
 
-      print "Using anyway\n";
+      warn "Using anyway\n";
     }
-    elsif(!$self->_Program_Version_Is_Valid($program_name,$choice,\%info))
+    else
     {
-      print "\"$choice\" is not a correct version\n";
-
-      if ($last_choice ne $choice)
+      my ($is_valid,$type,$version) = 
+        $self->_Program_Version_Is_Valid($program_name,$choice,\%info);
+      
+      if(!$is_valid)
       {
-        $last_choice = $choice;
-        redo ASK;
+        warn "\"$choice\" is not a correct version\n";
+
+        if ($last_choice ne $choice)
+        {
+          $last_choice = $choice;
+          redo ASK;
+        }
+
+        warn "Using anyway\n";
       }
 
-      print "Using anyway\n";
+      $program_info{$program_name} =
+        { path => $choice, type => undef, version => $version };
     }
-
-    $programs{$program_name} = $choice;
   }
 
-  return %programs;
+  return %program_info;
 }
 
 # ---------------------------------------------------------------------------
@@ -183,38 +243,38 @@ sub _Program_Version_Is_Valid
   my $program = shift;
   my %info = %{ shift @_ };
 
-  if (exists $info{$program_name}{'versions'})
+  if (exists $info{$program_name}{'types'})
   {
     my $program_version;
 
-    VERSION: foreach my $version (keys %{$info{$program_name}{'versions'}})
+    TYPE: foreach my $version (keys %{$info{$program_name}{'types'}})
     {
       $program_version = 
-        &{$info{$program_name}{'versions'}{$version}{'fetch'}}($program);
+        &{$info{$program_name}{'types'}{$version}{'fetch'}}($program);
 
-      next VERSION unless defined $program_version;
+      next TYPE unless defined $program_version;
 
       if ($self->Version_Matches_Range($program_version,
-        $info{$program_name}{'versions'}{$version}{'numbers'}))
+        $info{$program_name}{'types'}{$version}{'numbers'}))
       {
-        return 1;
+        return (1,$version,$program_version);
       }
     }
 
     my $program_version_string = '<UNKNOWN>';
     $program_version_string = $program_version if defined $program_version;
-    print "\"$program\" version $program_version_string is not valid for any of the following:\n";
+    warn "\"$program\" version $program_version_string is not valid for any of the following:\n";
 
-    foreach my $version (keys %{$info{$program_name}{'versions'}})
+    foreach my $version (keys %{$info{$program_name}{'types'}})
     {
-      print "  $version => " .
-        $info{$program_name}{'versions'}{$version}{'numbers'} . "\n";
+      warn "  $version => " .
+        $info{$program_name}{'types'}{$version}{'numbers'} . "\n";
     }
 
-    return 0;
+    return (0,undef,undef);
   }
 
-  return 1;
+  return (1,undef,undef);
 }
 
 # ---------------------------------------------------------------------------
@@ -256,6 +316,7 @@ sub Version_Matches_Range
 
 # ---------------------------------------------------------------------------
 
+# Returns the original if the full path can't be found
 sub _Make_Absolute
 {
   my $self = shift;
@@ -275,8 +336,10 @@ sub _Make_Absolute
       last if defined $self->can_run($path_to_choice);
     }
 
-    print "WARNING: Avoid security risks by converting to absolute paths\n";
-    print "\"$program\" is currently in your path at \"$path_to_choice\"\n";
+    return $program unless -e $path_to_choice;
+
+    warn "WARNING: Avoiding security risks by converting to absolute paths\n";
+    warn "\"$program\" is currently in your path at \"$path_to_choice\"\n";
 
     return $path_to_choice;
   }
@@ -286,6 +349,7 @@ sub _Make_Absolute
 
 sub Get_GNU_Version
 {
+  my $self = shift;
   my $program = shift;
 
   die "Missing GNU program to get version for" unless defined $program;
@@ -315,36 +379,6 @@ sub Get_GNU_Version
 
 # ---------------------------------------------------------------------------
 
-sub Get_GNU_GPP_Version
-{
-  my $self = shift;
-  my $program = shift;
-
-  return Get_GNU_Version($program);
-}
-
-# ---------------------------------------------------------------------------
-
-sub Get_GNU_Grep_Version
-{
-  my $self = shift;
-  my $program = shift;
-
-  return Get_GNU_Version($program);
-}
-
-# ---------------------------------------------------------------------------
-
-sub Get_GNU_Make_Version
-{
-  my $self = shift;
-  my $program = shift;
-
-  return Get_GNU_Version($program);
-}
-
-# ---------------------------------------------------------------------------
-
 sub Get_Bzip2_Version
 {
   my $self = shift;
@@ -362,5 +396,5 @@ sub Get_Bzip2_Version
 
 # ---------------------------------------------------------------------------
 
-#line 530
+#line 618
 
