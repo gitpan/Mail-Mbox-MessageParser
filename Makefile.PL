@@ -2,35 +2,34 @@
 
 use strict;
 use inc::Module::Install;
-use lib 'inc';
-use Module::Install::GetProgramLocations;
 
-Check_Custom_Installation();
+name              ('Mail-Mbox-MessageParser');
+author            ('David Coppit <david@coppit.org>');
+abstract_from     ('lib/Mail/Mbox/MessageParser.pm');
+version_from      ('lib/Mail/Mbox/MessageParser.pm');
+license           ('gpl');
 
-print "\n", '-'x78, "\n\n";
+build_requires    (
+                    'Test::More' => 0,
+                    'Text::Diff' => 0,
+                  );
 
-name            ('Mail-Mbox-MessageParser');
-author          ('David Coppit <david@coppit.org>');
-abstract_from   ('lib/Mail/Mbox/MessageParser.pm');
-version_from    ('lib/Mail/Mbox/MessageParser.pm');
-license         ('gpl');
-
-requires        (
-                  'Storable' => 0,
-                  'FileHandle::Unget' => 0,
-                );
-
-skip            ( 'Test',);
+requires          (
+                    'Storable' => 0,
+                    'FileHandle::Unget' => 0,
+                  );
 
 # Optional features and their modules
-features        (
-                  'Speed Tests' => [
-                    -default => 0,
-                    recommends( 'Benchmark::Timer' => '0.60' ),
-                  ],
-                );
+features          (
+                    'Speed Tests' => [
+                      -default => 0,
+                      # 0.6.0 => 0.006000. This is to prevent a spurious
+                      # warning in ExtUtils::MakeMaker
+                      recommends( 'Benchmark::Timer' => '0.006000' ),
+                    ],
+                  );
 
-postamble       (
+postamble         (
 '
 testspeed :: pure_all
 	PERL_DL_NONLAZY=1 $(PERLRUN) "-I$(INST_LIB)" \
@@ -38,9 +37,9 @@ testspeed :: pure_all
 '
 );
 
-include         ('ExtUtils/AutoInstall.pm');
+include           ('ExtUtils/AutoInstall.pm');
 
-clean_files     ('t/temp');
+clean_files       ('t/temp');
 
 print "\n", '-'x78, "\n\n";
 
@@ -48,7 +47,8 @@ Configure_Programs();
 
 print "\n", '-'x78, "\n\n";
 
-auto_install    ( );
+auto_include_deps ( );
+auto_install      ( );
 WriteAll();
 
 Fix_PREOP();
@@ -85,17 +85,14 @@ sub Configure_Programs
 
   my %locations = Get_Program_Locations(\%info);
 
-  Update_Code('lib/Mail/Mbox/MessageParser.pm', \%locations);
-  Update_Code('lib/Test/Utils.pm', \%locations);
-  Update_Code('old/Mail/Mbox/MessageParser.pm', \%locations)
+  Update_Config('lib/Mail/Mbox/MessageParser/Config.pm', \%locations);
+  Update_Config('old/Mail/Mbox/MessageParser/Config.pm', \%locations)
     if -e 'old/Mail/Mbox/MessageParser.pm';
-
-  return %locations;
 }
 
 # --------------------------------------------------------------------------
 
-sub Update_Code
+sub Update_Config
 {
   my $filename = shift;
   my %locations = %{ shift @_ };
@@ -114,24 +111,21 @@ sub Update_Code
     }
   }
 
-  if ($code =~ /(PROGRAMS = \(.*?\))/s)
+  if ($code =~ /'programs'\s*=>\s*{\s*?\n([^}]+?) *}/s)
   {
     my $original_programs = $1;
-    my $new_programs = $original_programs;
+    my $new_programs = '';
 
-    $new_programs =~ s/('diff' *=> *).*?,/$1$locations{diff},/;
-    $new_programs =~ s/('grep' *=> *).*?,/$1$locations{grep},/;
-    $new_programs =~ s/('tzip' *=> *).*?,/$1$locations{tzip},/;
-    $new_programs =~ s/('gzip' *=> *).*?,/$1$locations{gzip},/;
-    $new_programs =~ s/('compress' *=> *).*?,/$1$locations{gzip},/;
-    $new_programs =~ s/('bzip' *=> *).*?,/$1$locations{bzip},/;
-    $new_programs =~ s/('bzip2' *=> *).*?,/$1$locations{bzip2},/;
+    foreach my $program (sort keys %locations)
+    {
+      $new_programs .= "    '$program' => $locations{$program},\n";
+    }
 
     $code =~ s/\Q$original_programs\E/$new_programs/;
   }
   else
   {
-    die "Couldn't find programs hash in MessageParser.pm";
+    die "Couldn't find programs hash in $filename";
   }
 
   _Write_Code($filename, $code);

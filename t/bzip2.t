@@ -2,16 +2,15 @@
 
 use strict;
 
-use Test;
-use lib 'lib';
+use Test::More;
+use lib 't';
 use Test::Utils;
 use Mail::Mbox::MessageParser;
+use Mail::Mbox::MessageParser::Config;
 use File::Spec::Functions qw( :ALL );
 
-my $BZIP2 = $Mail::Mbox::MessageParser::PROGRAMS{bzip2} || 'bzip';
-
 my %tests = (
-"cat " . catfile('t','mailboxes','mailarc-2.txt.bz2') . " | $BZIP2 -cd"
+"cat " . catfile('t','mailboxes','mailarc-2.txt.bz2') . " | $Mail::Mbox::MessageParser::Config{'programs'}{'bzip2'} -cd"
   => ['mailarc-2.txt','none'],
 );
 
@@ -28,9 +27,12 @@ foreach my $test (sort keys %tests)
 {
   print "Running test:\n  $test\n";
 
-  skip("Skip $skip{$test}",1), next if exists $skip{$test};
+  SKIP:
+  {
+    skip("$skip{$test}",1) if exists $skip{$test};
 
-  TestIt($test, $tests{$test}, $expected_errors{$test});
+    TestIt($test, $tests{$test}, $expected_errors{$test});
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -51,16 +53,14 @@ sub TestIt
 
   if (!$? && defined $error_expected)
   {
-    print "Did not encounter an error executing the test when one was expected.\n\n";
-    ok(0);
+    ok(0,"Did not encounter an error executing the test when one was expected.\n\n");
     return;
   }
 
   if ($? && !defined $error_expected)
   {
-    print "Encountered an error executing the test when one was not expected.\n";
-    print "See $test_stdout and $test_stderr.\n\n";
-    ok(0);
+    ok(0,"Encountered an error executing the test when one was not expected.\n" .
+      "See $test_stdout and $test_stderr.\n\n");
     return;
   }
 
@@ -79,10 +79,10 @@ sub SetSkip
 
   my %skip;
 
-  unless (defined $Mail::Mbox::MessageParser::PROGRAMS{'bzip2'})
+  unless (defined $Mail::Mbox::MessageParser::Config{'programs'}{'bzip2'})
   {
-    $skip{"cat " . catfile('t','mailboxes','mailarc-2.txt.bz2') . " | $BZIP2 -cd"}
-      = 'bzip2 support not enabled in Mail::Mbox::MessageParser';
+    $skip{"cat " . catfile('t','mailboxes','mailarc-2.txt.bz2') . " | $Mail::Mbox::MessageParser::Config{'programs'}{'bzip2'} -cd"}
+      = 'bzip2 not available';
   }
 
   return %skip;

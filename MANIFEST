@@ -10,10 +10,13 @@ anonymize_mailbox
 
 # The module files
 lib/Mail/Mbox/MessageParser.pm
+lib/Mail/Mbox/MessageParser/Config.pm
 lib/Mail/Mbox/MessageParser/Cache.pm
 lib/Mail/Mbox/MessageParser/Grep.pm
 lib/Mail/Mbox/MessageParser/Perl.pm
-lib/Test/Utils.pm
+
+# The test module files
+t/Test/Utils.pm
 
 # Tests
 t/endline.t
@@ -31,6 +34,7 @@ t/prologue.t
 t/number.t
 t/offset.t
 t/reset.t
+t/separators.t
 t/stdin_compressed.t
 t/stdin_uncompressed.t
 t/speed.pl
@@ -43,6 +47,7 @@ t/mailboxes/mailarc-2.txt.bz2
 t/mailboxes/mailarc-2.txt.tz
 t/mailboxes/mailarc-3.txt
 t/mailboxes/mailseparators.txt
+t/mailboxes/separators1.sep
 t/mailboxes/newlines_at_beginning.txt
 #t/mailboxes/mailbox with space.txt
 #t/mailboxes/mailbox with space.txt.gz
@@ -98,22 +103,26 @@ t/results/reset_newlines_at_beginning.stdout
 #t/results/reset_mailbox with space.stdout
 
 # Module::Install extensions
+inc/Algorithm/Diff.pm
 inc/ExtUtils/AutoInstall.pm
-inc/File/HomeDir.pm
 inc/File/Spec.pm
+inc/File/Spec/Unix.pm
+inc/List/Util.pm
 inc/Module/Install/AutoInstall.pm
 inc/Module/Install/Base.pm
 inc/Module/Install/Can.pm
-inc/Module/Install/CustomInstallationPath.pm
 inc/Module/Install/Fetch.pm
 inc/Module/Install/GetProgramLocations.pm
 inc/Module/Install/Include.pm
 inc/Module/Install/Makefile.pm
 inc/Module/Install/Metadata.pm
-inc/Module/Install/Skip.pm
 inc/Module/Install/Win32.pm
 inc/Module/Install/WriteAll.pm
 inc/Module/Install.pm
+inc/Scalar/Util.pm
 inc/Sort/Versions.pm
+inc/Test/Builder.pm
+inc/Test/More.pm
+inc/Text/Diff.pm
 
 META.yml

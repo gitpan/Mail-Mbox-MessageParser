@@ -5,9 +5,10 @@
 
 use strict;
 
-use Test;
-use lib 'lib';
+use Test::More;
+use lib 't';
 use Mail::Mbox::MessageParser;
+use Mail::Mbox::MessageParser::Config;
 use Mail::Mbox::MessageParser::Cache;
 use Mail::Mbox::MessageParser::Grep;
 use Mail::Mbox::MessageParser::Perl;
@@ -28,59 +29,34 @@ foreach my $filename (@files)
 {
   print "Testing filename: $filename\n";
 
-  if ($filename =~ /\.bz2$/ && !defined $PROGRAMS{'bzip2'})
+  SKIP:
   {
-    skip('Skip bzip2 not available',1);
-    skip('Skip bzip2 not available',1);
-    skip('Skip bzip2 not available',1);
-    skip('Skip bzip2 not available',1);
-    next;
-  }
-  if ($filename =~ /\.bz$/ && !defined $PROGRAMS{'bzip'})
-  {
-    skip('Skip bzip not available',1);
-    skip('Skip bzip not available',1);
-    skip('Skip bzip not available',1);
-    skip('Skip bzip not available',1);
-    next;
-  }
-  if ($filename =~ /\.gz$/ && !defined $PROGRAMS{'gzip'})
-  {
-    skip('Skip gzip not available',1);
-    skip('Skip gzip not available',1);
-    skip('Skip gzip not available',1);
-    skip('Skip gzip not available',1);
-    next;
-  }
-  if ($filename =~ /\.tz$/ && !defined $PROGRAMS{'tzip'})
-  {
-    skip('Skip tzip not available',1);
-    skip('Skip tzip not available',1);
-    skip('Skip tzip not available',1);
-    skip('Skip tzip not available',1);
-    next;
-  }
+    skip('bzip2 not available',4)
+      if $filename =~ /\.bz2$/ &&
+        !defined $Mail::Mbox::MessageParser::Config{'programs'}{'bzip2'};
+    skip('bzip not available',4)
+      if $filename =~ /\.bz$/ &&
+        !defined $Mail::Mbox::MessageParser::Config{'programs'}{'bzip'};
+    skip('gzip not available',4)
+      if $filename =~ /\.gz$/ &&
+        !defined $Mail::Mbox::MessageParser::Config{'programs'}{'gzip'};
+    skip('tzip not available',4)
+      if $filename =~ /\.tz$/ &&
+        !defined $Mail::Mbox::MessageParser::Config{'programs'}{'tzip'};
 
-  TestImplementation($filename,0,0);
+    TestImplementation($filename,0,0);
 
-  if (defined $Storable::VERSION)
-  {
+    skip('Storable not installed',2) unless defined $Storable::VERSION;
+
+    InitializeCache($filename);
+
     TestImplementation($filename,1,0);
     TestImplementation($filename,1,1);
-  }
-  else
-  {
-    skip('Skip Storable not installed',1);
-    skip('Skip Storable not installed',1);
-  }
 
-  if (defined $Mail::Mbox::MessageParser::PROGRAMS{'grep'})
-  {
+    skip('GNU grep not available',1)
+      unless defined $Mail::Mbox::MessageParser::Config{'programs'}{'grep'};
+
     TestImplementation($filename,0,1);
-  }
-  else
-  {
-    skip('Skip GNU grep not available',1);
   }
 }
 

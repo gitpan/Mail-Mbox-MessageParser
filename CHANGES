@@ -1,3 +1,17 @@
+Version 1.2130: Tue Dec 21 2004
+- Fixed version numbers, which were incompatible with some modules. (Thanks to
+  Tassilo von Parseval <tassilo.von.parseval@rwth-aachen.de> for the bug
+  report)
+
+Version 1.21.2:
+- Fixed a dependency version error for Benchmark::Timer
+- Switched to Test::More for better error reporting
+- Improved test failure reporting
+- Fixed a bug where messages embedded in other messages as RFC 822 attachments
+  would be treated as separate emails. (Thanks to Will Fiveash
+  <william.fiveash@sun.com> for the bug report.)
+- Moved all configuration data to M::M::MP::Config
+
 Version 1.21.1: Thu Sep 16 2004
 - Fixed broken dependency specification in Makefile.PL
 - Removed Module::Install extension dependency code from Makefile.PL. (Not

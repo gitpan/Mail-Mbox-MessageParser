@@ -5,12 +5,14 @@ no strict;
 @ISA = qw( Exporter Mail::Mbox::MessageParser );
 
 use strict;
-use Mail::Mbox::MessageParser;
 use Carp;
+
+use Mail::Mbox::MessageParser;
+use Mail::Mbox::MessageParser::Config;
 
 use vars qw( $VERSION $DEBUG $GREP_DATA );
 
-$VERSION = '1.5.0';
+$VERSION = sprintf "%d.%02d%02d", q/1.50.30/ =~ /(\d+)/g;
 
 $GREP_DATA = {};
 
@@ -32,7 +34,7 @@ sub new
   carp "Need file_handle option" unless defined $options->{'file_handle'};
 
   return "GNU grep not installed"
-    unless defined $Mail::Mbox::MessageParser::PROGRAMS{'grep'};
+    unless defined $Mail::Mbox::MessageParser::Config{'programs'}{'grep'};
 
   $self->{'file_handle'} = undef;
   $self->{'file_handle'} = $options->{'file_handle'}
@@ -100,7 +102,7 @@ sub _READ_GREP_DATA
   {
     my @grep_results;
     
-    @grep_results = `$Mail::Mbox::MessageParser::PROGRAMS{'grep'} --extended-regexp --line-number --byte-offset --binary-files=text "^(X-Draft-From: .*|X-From-Line: .*|From [^:]+(:[0-9][0-9]){1,2} ([A-Z]{2,3} [0-9]{4}|[0-9]{4} [+-][0-9]{4}|[0-9]{4})( remote from .*)?)\r?\$" "$filename"`;
+    @grep_results = `$Mail::Mbox::MessageParser::Config{'programs'}{'grep'} --extended-regexp --line-number --byte-offset --binary-files=text "^(X-Draft-From: .*|X-From-Line: .*|From [^:]+(:[0-9][0-9]){1,2} ([A-Z]{2,3} [0-9]{4}|[0-9]{4} [+-][0-9]{4}|[0-9]{4})( remote from .*)?)\r?\$" "$filename"`;
 
     dprint "Read " . scalar(@grep_results) . " lines of grep data";
 
@@ -167,12 +169,23 @@ sub read_next_email
     last LOOK_FOR_NEXT_EMAIL
       if $GREP_DATA->{$self->{'file_name'}}{'validated'}[$self->{'email_number'}];
 
+    my $endline = $self->{'endline'};
+
     # Keep looking if the header we found is part of a "Begin Included
     # Message".
-    my $end_of_string = substr($email, -200);
-    my $endline = $self->{'endline'};
+    my $end_of_string = '';
+    my $backup_amount = 100;
+    do
+    {
+      $backup_amount *= 2;
+      $end_of_string = substr($email, -$backup_amount);
+    } while (index($end_of_string, "$endline$endline") == -1 &&
+      $backup_amount < $self->{'email_length'});
+
     if ($end_of_string =~
-        /$endline-----(?: Begin Included Message |Original Message)-----$endline[^\r\n]*(?:$endline)*$/i)
+        /$endline-----(?: Begin Included Message |Original Message)-----$endline[^\r\n]*(?:$endline)*$/i ||
+        $end_of_string =~
+          /$endline--[^\r\n]*${endline}Content-type:[^\r\n]*$endline$endline/i)
     {
       dprint "Incorrect start of email found--adjusting grep data";
 

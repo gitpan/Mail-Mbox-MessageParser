@@ -1,7 +1,5 @@
 #!/usr/bin/perl
 
-# Test that every email read has the right starting line number.
-
 use strict;
 
 use Test::More;
@@ -17,34 +15,34 @@ use FileHandle;
 
 eval 'require Storable;';
 
-my @files = <t/mailboxes/*.txt>;
-@files = grep { $_ ne 't/mailboxes/vm-emacs.txt' } @files;
+my %tests = (
+  "t/mailboxes/separators1.sep" => 1,
+);
 
 mkdir catfile('t','temp'), 0700;
 
-plan (tests => 3 * scalar (@files));
+plan (tests => 3 * scalar (keys %tests));
 
-foreach my $filename (@files) 
+foreach my $filename (keys %tests) 
 {
   print "Testing filename: $filename\n";
 
-  TestImplementation($filename,0,0);
-
   SKIP:
   {
-    skip('Storable not installed',1) unless defined $Storable::VERSION;
+    skip('Storable not installed',2) unless defined $Storable::VERSION;
 
     InitializeCache($filename);
 
-    TestImplementation($filename,1,0);
+    TestImplementation($filename,$tests{$filename},1,0);
+    TestImplementation($filename,$tests{$filename},1,1);
   }
 
   SKIP:
   {
-    skip('GNU grep not available',1)
+    skip('Skip GNU grep not available',1)
       unless defined $Mail::Mbox::MessageParser::Config{'programs'}{'grep'};
 
-    TestImplementation($filename,0,1);
+    TestImplementation($filename,$tests{$filename},0,1);
   }
 }
 
@@ -53,21 +51,20 @@ foreach my $filename (@files)
 sub TestImplementation
 {
   my $filename = shift;
+  my $number_of_emails = shift;
   my $enable_cache = shift;
   my $enable_grep = shift;
 
   my $testname = [splitdir($0)]->[-1];
-  $testname =~ s/\.t//;
+  $testname =~ s#\.t##;
 
-  my ($folder_name) = $filename =~ /\/([^\/]*)\.txt$/;
+  my ($folder_name) = $filename =~ /\/([^\/\\]*)\.txt$/;
 
   my $output_filename = catfile('t','temp',
     "${testname}_${folder_name}_${enable_cache}_${enable_grep}.stdout");
 
   my $output = new FileHandle(">$output_filename");
   binmode $output;
-
-  my $filehandle = new FileHandle($filename);
 
   my $cache_file = catfile('t','temp','cache');
 
@@ -77,28 +74,27 @@ sub TestImplementation
   my $folder_reader =
       new Mail::Mbox::MessageParser( {
         'file_name' => $filename,
-        'file_handle' => $filehandle,
+        'file_handle' => undef,
         'enable_cache' => $enable_cache,
         'enable_grep' => $enable_grep,
       } );
 
   die $folder_reader unless ref $folder_reader;
 
+  my $prologue = $folder_reader->prologue;
+  print $output $prologue;
+
+  my $count = 0;
+
   # This is the main loop. It's executed once for each email
   while(!$folder_reader->end_of_file())
   {
-    $folder_reader->read_next_email();
+    my $email_text = $folder_reader->read_next_email();
 
-    print $output $folder_reader->line_number() . "\n";
+    $count++;
   }
 
   $output->close();
 
-  my $compare_filename = 
-    catfile('t','results',"${testname}_${folder_name}.stdout");
-
-  CheckDiffs([$compare_filename,$output_filename]);
+  is($count,$number_of_emails, "Number of emails in $filename");
 }
-
-# ---------------------------------------------------------------------------
-

@@ -4,10 +4,11 @@
 
 use strict;
 
-use Test;
-use lib 'lib';
+use Test::More;
+use lib 't';
 use File::Spec::Functions qw(:ALL);
 use Test::Utils;
+use Mail::Mbox::MessageParser::Config;
 use FileHandle;
 
 my @files = <t/mailboxes/*.txt.*>;
@@ -25,28 +26,26 @@ foreach my $filename (@files)
 {
   print "Testing filename: $filename\n";
 
-  if ($filename =~ /\.bz2$/ && !defined $PROGRAMS{'bzip2'})
+  SKIP:
   {
-    skip('Skip bzip2 not available',1);
-    next;
-  }
-  if ($filename =~ /\.bz$/ && !defined $PROGRAMS{'bzip'})
-  {
-    skip('Skip bzip not available',1);
-    next;
-  }
-  if ($filename =~ /\.gz$/ && !defined $PROGRAMS{'gzip'})
-  {
-    skip('Skip gzip not available',1);
-    next;
-  }
-  if ($filename =~ /\.tz$/ && !defined $PROGRAMS{'tzip'})
-  {
-    skip('Skip tzip not available',1);
-    next;
-  }
+    skip('bzip2 not available',1)
+      if $filename =~ /\.bz2$/ &&
+        !defined $Mail::Mbox::MessageParser::Config{'programs'}{'bzip2'};
 
-  TestImplementation($filename, $test_program);
+    skip('bzip not available',1)
+      if $filename =~ /\.bz$/ &&
+        !defined $Mail::Mbox::MessageParser::Config{'programs'}{'bzip'};
+
+    skip('gzip not available',1)
+      if $filename =~ /\.gz$/ &&
+        !defined $Mail::Mbox::MessageParser::Config{'programs'}{'gzip'};
+
+    skip('tzip not available',1)
+      if $filename =~ /\.tz$/ &&
+        !defined $Mail::Mbox::MessageParser::Config{'programs'}{'tzip'};
+
+    TestImplementation($filename, $test_program);
+  }
 }
 
 # ---------------------------------------------------------------------------

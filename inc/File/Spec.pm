@@ -1,10 +1,10 @@
-#line 1 "inc/File/Spec.pm - /System/Library/Perl/5.8.1/File/Spec.pm"
+#line 1 "inc/File/Spec.pm - /System/Library/Perl/5.8.1/darwin-thread-multi-2level/File/Spec.pm"
 package File::Spec;
 
 use strict;
 use vars qw(@ISA $VERSION);
 
-$VERSION = '0.89';
+$VERSION = '3.01';
 $VERSION = eval $VERSION;
 
 my %module = (MacOS   => 'Mac',

@@ -3,13 +3,14 @@
 use strict;
 #use warnings 'all';
 
-use Test;
-use lib 'lib';
+use Test::More;
+use lib 't';
 use File::Spec::Functions qw(:ALL);
 use Test::Utils;
+use Mail::Mbox::MessageParser::Config;
 use Mail::Mbox::MessageParser;
 
-my $TZIP = $PROGRAMS{'tzip'} || 'not installed';
+my $TZIP = $Mail::Mbox::MessageParser::Config{'programs'}{'tzip'} || 'not installed';
 
 my %tests = (
 "cat " . catfile('t','mailboxes','mailarc-2.txt.tz') . " | $TZIP -cd"
@@ -29,9 +30,12 @@ foreach my $test (sort keys %tests)
 {
   print "Running test:\n  $test\n";
 
-  skip("Skip $skip{$test}",1), next if exists $skip{$test};
+  SKIP:
+  {
+    skip("$skip{$test}",1) if exists $skip{$test};
 
-  TestIt($test, $tests{$test}, $expected_errors{$test});
+    TestIt($test, $tests{$test}, $expected_errors{$test});
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -52,16 +56,14 @@ sub TestIt
 
   if (!$? && defined $error_expected)
   {
-    print "Did not encounter an error executing the test when one was expected.\n\n";
-    ok(0);
+    ok(0,"Did not encounter an error executing the test when one was expected.\n\n");
     return;
   }
 
   if ($? && !defined $error_expected)
   {
-    print "Encountered an error executing the test when one was not expected.\n";
-    print "See $test_stdout and $test_stderr.\n\n";
-    ok(0);
+    ok(0, "Encountered an error executing the test when one was not expected.\n" .
+      "See $test_stdout and $test_stderr.\n\n");
     return;
   }
 
@@ -80,10 +82,10 @@ sub SetSkip
 
   my %skip;
 
-  unless (defined $PROGRAMS{'tzip'})
+  unless (defined $Mail::Mbox::MessageParser::Config{'programs'}{'tzip'})
   {
     $skip{"cat " . catfile('t','mailboxes','mailarc-2.txt.tz') . " | $TZIP -cd"}
-      = 'tzip support not enabled in Mail::Mbox::MessageParser';
+      = 'tzip not available';
   }
 
   return %skip;

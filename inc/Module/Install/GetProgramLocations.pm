@@ -13,9 +13,10 @@ use vars qw( @ISA $VERSION @EXPORT );
 use Module::Install::Base;
 @ISA = qw( Module::Install::Base Exporter );
 
-@EXPORT = qw( &Get_GNU_Grep_Version &Get_Bzip2_Version );
+@EXPORT = qw( &Get_GNU_GPP_Version &Get_GNU_Grep_Version
+              &Get_GNU_Make_Version &Get_Bzip2_Version );
 
-$VERSION = '0.10.1';
+$VERSION = sprintf "%d.%02d%02d", q/0.10.20/ =~ /(\d+)/g;
 
 # ---------------------------------------------------------------------------
 
@@ -99,29 +100,73 @@ sub _Prompt_User_For_Program_Locations
 
   my @path = split /$Config{path_sep}/, $ENV{PATH};
 
+  print "Enter the full path, or \"none\" for none.\n";
+
+  my $last_choice = '';
+
   ASK: foreach my $program_name (sort keys %programs)
   {
-    my $name = $Config{$program_name} || $info{$program_name}{'default'};
+    my ($name,$full_path);
 
     # Convert any default to a full path, initially
-    my $full_path = $self->can_run($name);
+    $name = $Config{$program_name};
+    $full_path = $self->can_run($name);
+
+    if ($name eq '' || !defined $full_path)
+    {
+      $name = $info{$program_name}{'default'};
+      $full_path = $self->can_run($name);
+    }
+
     $full_path = 'none' if !defined $full_path || $name eq '';
 
+    my $allowed_versions = '';
+    if (exists $info{$program_name}{'versions'})
+    {
+      foreach my $type (keys %{ $info{$program_name}{'versions'} } )
+      {
+        $allowed_versions .= ", $type";
+      }
+
+      $allowed_versions =~ s/^, //;
+      $allowed_versions =~ s/(.*), /$1, or /;
+      $allowed_versions = " ($allowed_versions";
+      $allowed_versions .=
+        scalar(keys %{ $info{$program_name}{'versions'} }) > 1 ?
+        " versions)" : " version)";
+    }
+
     my $choice = $self->prompt(
-      "Where can I find your \"$program_name\" executable?" => $full_path);
+      "Where can I find your \"$program_name\" executable?$allowed_versions" => $full_path);
 
     $programs{$program_name} = undef, next if $choice eq 'none';
 
     $choice = $self->_Make_Absolute($choice);
 
-    unless (defined $self->can_run($choice))
+    if (!defined $self->can_run($choice))
     {
       print "\"$choice\" does not appear to be a valid executable\n";
-      redo ASK;
-    }
 
-    redo ASK
-      unless $self->_Program_Version_Is_Valid($program_name,$choice,\%info);
+      if ($last_choice ne $choice)
+      {
+        $last_choice = $choice;
+        redo ASK;
+      }
+
+      print "Using anyway\n";
+    }
+    elsif(!$self->_Program_Version_Is_Valid($program_name,$choice,\%info))
+    {
+      print "\"$choice\" is not a correct version\n";
+
+      if ($last_choice ne $choice)
+      {
+        $last_choice = $choice;
+        redo ASK;
+      }
+
+      print "Using anyway\n";
+    }
 
     $programs{$program_name} = $choice;
   }
@@ -157,7 +202,7 @@ sub _Program_Version_Is_Valid
     }
 
     my $program_version_string = '<UNKNOWN>';
-    $program_version_string= $program_version if defined $program_version;
+    $program_version_string = $program_version if defined $program_version;
     print "\"$program\" version $program_version_string is not valid for any of the following:\n";
 
     foreach my $version (keys %{$info{$program_name}{'versions'}})
@@ -239,9 +284,11 @@ sub _Make_Absolute
 
 # ---------------------------------------------------------------------------
 
-sub Get_GNU_Grep_Version
+sub Get_GNU_Version
 {
   my $program = shift;
+
+  die "Missing GNU program to get version for" unless defined $program;
 
   my $version_message;
 
@@ -252,13 +299,14 @@ sub Get_GNU_Grep_Version
   }
 
   # Older versions use -V
-  unless($version_message =~ /\bGNU\b/)
+  unless($version_message =~ /\b(GNU|Free\s+Software\s+Foundation)\b/s)
   {
     my $command = "$program -V 2>&1 1>" . File::Spec->devnull();
     $version_message = `$command`;
   }
 
-  return undef unless $version_message =~ /\bGNU\b/;
+  return undef unless
+    $version_message =~ /\b(GNU|Free\s+Software\s+Foundation)\b/s;
 
   my ($program_version) = $version_message =~ /^.*?([\d]+\.[\d.a-z]+)/s;
 
@@ -267,8 +315,39 @@ sub Get_GNU_Grep_Version
 
 # ---------------------------------------------------------------------------
 
+sub Get_GNU_GPP_Version
+{
+  my $self = shift;
+  my $program = shift;
+
+  return Get_GNU_Version($program);
+}
+
+# ---------------------------------------------------------------------------
+
+sub Get_GNU_Grep_Version
+{
+  my $self = shift;
+  my $program = shift;
+
+  return Get_GNU_Version($program);
+}
+
+# ---------------------------------------------------------------------------
+
+sub Get_GNU_Make_Version
+{
+  my $self = shift;
+  my $program = shift;
+
+  return Get_GNU_Version($program);
+}
+
+# ---------------------------------------------------------------------------
+
 sub Get_Bzip2_Version
 {
+  my $self = shift;
   my $program = shift;
 
   my $command = "$program --help 2>&1 1>" . File::Spec->devnull();
@@ -283,5 +362,5 @@ sub Get_Bzip2_Version
 
 # ---------------------------------------------------------------------------
 
-#line 447
+#line 530
 
