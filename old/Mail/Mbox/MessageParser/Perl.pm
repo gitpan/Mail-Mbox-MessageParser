@@ -35,7 +35,8 @@ sub new
 
   $self->reset();
 
-  $self->{'file_name'} = $options->{'file_name'};
+  $self->{'file_name'} = $options->{'file_name'}
+    if defined $options->{'file_name'};
 
   $self->{'READ_CHUNK_SIZE'} = $READ_CHUNK_SIZE;
 
@@ -72,7 +73,7 @@ sub reset
     }
     else
     {
-      seek $self->{'file_handle'}, 0, 0;
+    seek $self->{'file_handle'}, 0, 0;
     }
 
     $self->{'CURRENT_LINE_NUMBER'} = 1;
@@ -97,8 +98,8 @@ sub _IS_A_PIPE
 {
   my $file_handle = shift;
 
-  return (-t $file_handle || -S $file_handle ||
-     -p $file_handle || !(seek $file_handle, 0, 1));
+  return (-t $file_handle || -S $file_handle || -p $file_handle ||
+    !-f $file_handle || !(seek $file_handle, 0, 1));
 }
 
 #-------------------------------------------------------------------------------
