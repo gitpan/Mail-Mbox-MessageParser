@@ -5,18 +5,43 @@ no strict;
 @ISA = qw( Exporter Mail::Mbox::MessageParser );
 
 use strict;
-use Mail::Mbox::MessageParser;
-use Carp;
+use warnings 'all';
+no warnings 'redefine';
 
-use vars qw( $VERSION $DEBUG $GREP_DATA );
+our $VERSION = '1.00';
 
-$VERSION = '1.01';
+our $DEBUG = 0;
 
-$GREP_DATA = {};
+our $GREP_DATA = {};
 
-*DEBUG = \$Mail::Mbox::MessageParser::DEBUG;
-*dprint = \&Mail::Mbox::MessageParser::dprint;
-sub dprint;
+#-------------------------------------------------------------------------------
+
+sub dprint
+{
+  return Mail::Mbox::MessageParser::dprint @_;
+}
+
+#-------------------------------------------------------------------------------
+
+sub _HAS_GREP
+{
+  my $temp = `grep --help 2>&1`;
+
+  if ($temp =~ /usage/i && $temp =~ /extended-reg/i &&
+    $temp =~ /byte-offset/i && $temp =~ /line-numb/i)
+  {
+    return 1;
+  }
+  else
+  {
+    return 0;
+  }
+}
+
+#-------------------------------------------------------------------------------
+
+die "Can not load " . __PACKAGE__ . ": GNU grep is not installed.\n"
+  unless _HAS_GREP();
 
 #-------------------------------------------------------------------------------
 
@@ -28,26 +53,28 @@ sub new
   my $self  = {};
   bless ($self, $class);
 
-  carp "Need file_name option" unless defined $options->{'file_name'};
-  carp "Need file_handle option" unless defined $options->{'file_handle'};
-
-  return "GNU grep not installed"
-    unless defined $Mail::Mbox::MessageParser::PROGRAMS{'grep'};
+  die "Need file_name option" unless defined $options->{'file_name'};
+  die "Need file_handle option" unless defined $options->{'file_handle'};
 
   $self->{'file_handle'} = undef;
   $self->{'file_handle'} = $options->{'file_handle'}
     if exists $options->{'file_handle'};
 
   $self->{'file_name'} = $options->{'file_name'};
-  $self->{'file_name'} = $options->{'file_name'};
-  $self->{'force_processing'} = $options->{'force_processing'};
 
-  $self->reset();
+  $self->{'end_of_file'} = 0;
 
-  _READ_GREP_DATA($self->{'file_name'},$self->{'force_processing'})
-    unless defined $GREP_DATA->{$self->{'file_name'}};
+  # The line number of the last read email.
+  $self->{'email_line_number'} = 0;
+  # The offset of the last read email.
+  $self->{'email_offset'} = 0;
+  # The length of the last read email.
+  $self->{'email_length'} = 0;
 
-  return "Couldn't read grep data"
+  $self->{'email_number'} = 0;
+
+
+  _READ_GREP_DATA($self->{'file_name'})
     unless defined $GREP_DATA->{$self->{'file_name'}};
 
   return $self;
@@ -59,8 +86,7 @@ sub reset
 {
   my $self = shift;
 
-  seek $self->{'file_handle'}, length($self->{'prologue'}), 0
-    if defined $self->{'file_handle'} && defined $self->{'prologue'};
+  seek $self->{'file_handle'}, length($self->{'prologue'}), 0;
 
   $self->{'end_of_file'} = 0;
 
@@ -76,7 +102,7 @@ sub _read_prologue
 {
   my $self = shift;
 
-  dprint "Reading mailbox prologue using grep";
+  Mail::Mbox::MessageParser::dprint "Reading mailbox prologue using grep";
 
   my $prologue_length = $GREP_DATA->{$self->{'file_name'}}{'offsets'}[0];
   my $bytes_read = 0;
@@ -93,25 +119,11 @@ sub _read_prologue
 sub _READ_GREP_DATA
 {
   my $filename = shift;
-  my $force_processing = shift;
 
   my @lines_and_offsets;
 
-  dprint "Reading grep data";
-
   {
-    my @grep_results;
-    
-    if ($force_processing)
-    {
-      @grep_results = `$Mail::Mbox::MessageParser::PROGRAMS{'grep'} --extended-regexp --line-number --byte-offset --binary-files=text '^(X-Draft-From: .*|X-From-Line: .*|From [^:]+(:[0-9][0-9]){1,2} ([A-Z]{2,3} [0-9]{4}|[0-9]{4} [+-][0-9]{4}|[0-9]{4})( remote from .*)?)\$' '$filename'`;
-    }
-    else
-    {
-      @grep_results = `$Mail::Mbox::MessageParser::PROGRAMS{'grep'} --extended-regexp --line-number --byte-offset '^(X-Draft-From: .*|X-From-Line: .*|From [^:]+(:[0-9][0-9]){1,2} ([A-Z]{2,3} [0-9]{4}|[0-9]{4} [+-][0-9]{4}|[0-9]{4})( remote from .*)?)\$' '$filename'`;
-    }
-
-    dprint "Read " . scalar(@grep_results) . " lines of grep data";
+    my @grep_results = `grep --extended-regexp --line-number --byte-offset '^(X-Draft-From: .*|X-From-Line: .*|From [^:]+(:[0-9][0-9]){1,2}( +([A-Z]{2,3}|[+-]?[0-9]{4})){1,3}( remote from .*)?)\$' $filename`;
 
     foreach my $match_result (@grep_results)
     {
@@ -125,7 +137,8 @@ sub _READ_GREP_DATA
   {
     if ($match_number == $#lines_and_offsets)
     {
-      my $filesize = -s $filename; $GREP_DATA->{$filename}{'lengths'}[$match_number] =
+      my $filesize = -s $filename;
+      $GREP_DATA->{$filename}{'lengths'}[$match_number] =
         $filesize - $lines_and_offsets[$match_number]{'byte offset'};
     }
     else
@@ -150,6 +163,8 @@ sub _READ_GREP_DATA
 sub read_next_email
 {
   my $self = shift;
+
+  Mail::Mbox::MessageParser::dprint "Using grep data" if $DEBUG;
 
   $self->{'email_line_number'} =
     $GREP_DATA->{$self->{'file_name'}}{'line_numbers'}[$self->{'email_number'}];
@@ -182,8 +197,6 @@ sub read_next_email
     if ($end_of_string =~
         /\n-----(?: Begin Included Message |Original Message)-----\n[^\n]*\n*$/i)
     {
-      dprint "Incorrect start of email found--adjusting grep data";
-
       $GREP_DATA->{$self->{'file_name'}}{'lengths'}[$self->{'email_number'}] +=
         $GREP_DATA->{$self->{'file_name'}}{'lengths'}[$self->{'email_number'}+1];
 
@@ -243,6 +256,18 @@ Mail::Mbox::MessageParser::Grep - A GNU grep-based mbox folder reader
 
   #!/usr/bin/perl
 
+  unless (eval 'require Mail::Mbox::MessageParser::Grep;')
+  {
+    if ($@ =~ /GNU grep is not installed/)
+    {
+      die "GNU grep is not installed\n";
+    }
+    else
+    {
+      die $@;
+    }
+  }
+
   use Mail::Mbox::MessageParser::Grep;
 
   my $filename = 'mail/saved-mail';
@@ -252,10 +277,8 @@ Mail::Mbox::MessageParser::Grep - A GNU grep-based mbox folder reader
     new Mail::Mbox::MessageParser::Grep( {
       'file_name' => $filename,
       'file_handle' => $filehandle,
-      'file_handle' => $filehandle,
     } );
 
-  die $folder_reader unless ref $folder_reader;
   
   # Any newlines or such before the start of the first email
   my $prologue = $folder_reader->prologue;
@@ -285,19 +308,14 @@ the Mail::Mbox::MessageParser documentation.
 =over 4
 
 =item $ref = new( { 'file_name' => <mailbox file name>,
-                    'file_handle' => <mailbox file handle>,
-                    'force_processing' => <1 or 0>, });
+                    'file_handle' => <mailbox file handle> });
 
     <file_name> - The full filename of the mailbox
     <file_handle> - An opened file handle for the mailbox
-    <force_processing> - true to force processing of files that look invalid
 
 The constructor for the class takes two parameters. I<file_name> is the
 filename of the mailbox.  The I<file_handle> argument is the opened file
 handle to the mailbox. Both arguments are required.
-
-Returns a reference to a Mail::Mbox::MessageParser object, or a string
-describing the error.
 
 
 =head1 BUGS

@@ -4,9 +4,22 @@ Mail::Mbox::MessageParser is a feature-poor but very fast mbox parser. It uses
 the best of three strategies for parsing a mailbox: either using cached folder
 information, GNU grep, or highly optimized Perl.
 
-New in version 1.00:
-- This is the initial version. The code is based on a previou version that was
-  part of the grepmail package.
+Version 1.10:
+- Testing modules are no longer (accidentally) installed.
+- External programs are now queried during installation instead of just using
+  whatever is in your path (a security risk).
+- Changed testing to use PERLRUN instead of FULLPERLRUN, which is not
+  available with older versions of MakeMaker that ship with older versions of
+  Perl.
+- Cache file permissions are now set to protect against prying eyes.
+- Improved speed testing.
+- Added support for opening of files, and decompressing files or filehandles.
+- Restructured test cases.
+- Fixed a bug in _PUT_BACK_STRING which would cause major failures on Solaris.
+- Fixed compatibility problems with perl 5.005_01
+- Fixed grep implementation for filenames with spaces in them. 
+- Added "force_processing" option to force processing of files even if they
+  look to be binary or non-mailboxes.
 
 
 DEPENDENCIES
@@ -34,10 +47,20 @@ INSTALLATION
 
 The "perl Makefile.PL" command will prompt you for an installation location if
 you run it interactively, and will use the default values if it is run
-non-iteractively. You can force it to run non-interactively by specifying
-either "PREFIX=/installation/path" (for installation into a custom location),
-"INSTALLDIRS=site" (for installation into site-specific Perl directories), or
-"INSTALLDIRS=perl" (for installation into standard Perl directories).
+non-iteractively. You will be asked to select the locations of certain
+external compression programs.
+
+You can force it to run non-interactively by specifying each of the following:
+
+- either "PREFIX=/installation/path" (for installation into a custom
+  location), "INSTALLDIRS=site" (for installation into site-specific Perl
+  directories), or "INSTALLDIRS=perl" (for installation into standard Perl
+  directories).
+- the path to one or more external programs. For example,
+  "GREP=/gnu/bin/grep TZIP= GZIP=/gnu/bin/gzip BZIP=/bin/bzip2 BZIP2=/bin/bzip2"
+  would set values for all but one program. "TZIP=" disables compression
+  support and prevents interactive execution. (NOTE: These values are not
+  validated as they are in the interactive query.)
 
 If make test fails, please see the INSTALLATION PROBLEMS section below.
 
@@ -66,17 +89,17 @@ Mail::Mbox::MessageParser::Perl
 
 HOMEPAGE
 
-Visit http://www.coppit.org/code/index.html for the latest version.
+http://m-m-msgparser.sourceforge.net/
 
 
 REPORTING BUGS
 
-You can report bugs by sending email to david@coppit.org. Please attach the
-output files noted above. If the bug is related to processing of a particular
-mailbox, try to trim the mailbox to the smallest set of emails that still
-exhibit the problem.  Then use the "anonymize_mailbox" program that comes with
-the distribution to remove any sensitive information, and attach the mailbox
-to the bug report.
+You can report bugs by filing a bug report at the project homepage. Please
+attach the output files noted above. If the bug is related to processing of a
+particular mailbox, try to trim the mailbox to the smallest set of emails that
+still exhibit the problem.  Then use the "anonymize_mailbox" program that
+comes with the distribution to remove any sensitive information, and attach
+the mailbox to the bug report.
 
 
 PRIMARY AUTHOR

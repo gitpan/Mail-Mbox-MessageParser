@@ -1,15 +1,18 @@
 #!/usr/bin/perl
 
+# Test that we can pipe compressed data to the module
+
 use strict;
-use warnings 'all';
 
 use Test;
-use Test::CompareFiles;
+use lib 'lib';
+use Test::Utils;
 use FileHandle;
 
-my @files = <t/mailboxes/*.txt>;
+my @files = <t/mailboxes/*.txt.*>;
+@files = grep { !/non-mailbox/ } @files;
 
-mkdir 't/temp';
+mkdir 't/temp', 0700;
 
 plan (tests => 1 * scalar (@files));
 
@@ -19,6 +22,27 @@ my $test_program = <DATA>;
 
 foreach my $filename (@files) 
 {
+  if ($filename =~ /\.bz2$/ && !defined $PROGRAMS{'bzip2'})
+  {
+    skip('Skip bzip2 not available',1);
+    next;
+  }
+  if ($filename =~ /\.bz$/ && !defined $PROGRAMS{'bzip'})
+  {
+    skip('Skip bzip not available',1);
+    next;
+  }
+  if ($filename =~ /\.gz$/ && !defined $PROGRAMS{'gzip'})
+  {
+    skip('Skip gzip not available',1);
+    next;
+  }
+  if ($filename =~ /\.tz$/ && !defined $PROGRAMS{'tzip'})
+  {
+    skip('Skip tzip not available',1);
+    next;
+  }
+
   TestImplementation($filename, $test_program);
 }
 
@@ -33,10 +57,10 @@ sub TestImplementation
   $testname =~ s/.*\///;
   $testname =~ s/\.t//;
 
-  my ($folder_name) = $filename =~ /\/([^\/]*)\.txt$/;
+  my ($folder_name) = $filename =~ /\/([^\/]*)\.txt.*$/;
 
   my $output_filename =
-    "t/temp/${testname}_${folder_name}.testoutput";
+    "t/temp/${testname}_${folder_name}.stdout";
 
   local $/ = undef;
 
@@ -48,12 +72,14 @@ sub TestImplementation
   my $mailbox = <MAILBOX>;
   close MAILBOX;
 
-  open PIPE, "|$^X -Iblib/lib t/temp/stdin.pl $output_filename";
+  open PIPE, "|$^X -Iblib/lib t/temp/stdin.pl '$output_filename'";
   local $SIG{PIPE} = sub { die "test program pipe broke" };
   print PIPE $mailbox;
   close PIPE;
 
-  CheckDiffs($filename,$output_filename);
+  $filename =~ s/\.(tz|bz2|gz)$//;
+
+  CheckDiffs([$filename,$output_filename]);
 }
 
 ################################################################################
@@ -93,6 +119,8 @@ sub ParseFile
         'enable_cache' => 0,
         'enable_grep' => 0,
       } );
+
+  die $folder_reader unless ref $folder_reader;
 
   print $output_file_handle $folder_reader->prologue();
 

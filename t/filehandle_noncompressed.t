@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 
-# Test that every email read has the right starting index number.
+# Test that we can process file handles for compressed and non-compressed
+# files.
 
 use strict;
 
@@ -17,10 +18,43 @@ my @files = <t/mailboxes/*.txt>;
 
 mkdir 't/temp', 0700;
 
-plan (tests => 3 * scalar (@files));
+plan (tests => 4 * scalar (@files));
 
 foreach my $filename (@files) 
 {
+  if ($filename =~ /\.bz2$/ && !defined $PROGRAMS{'bzip2'})
+  {
+    skip('Skip bzip2 not available',1);
+    skip('Skip bzip2 not available',1);
+    skip('Skip bzip2 not available',1);
+    skip('Skip bzip2 not available',1);
+    next;
+  }
+  if ($filename =~ /\.bz$/ && !defined $PROGRAMS{'bzip'})
+  {
+    skip('Skip bzip not available',1);
+    skip('Skip bzip not available',1);
+    skip('Skip bzip not available',1);
+    skip('Skip bzip not available',1);
+    next;
+  }
+  if ($filename =~ /\.gz$/ && !defined $PROGRAMS{'gzip'})
+  {
+    skip('Skip gzip not available',1);
+    skip('Skip gzip not available',1);
+    skip('Skip gzip not available',1);
+    skip('Skip gzip not available',1);
+    next;
+  }
+  if ($filename =~ /\.tz$/ && !defined $PROGRAMS{'tzip'})
+  {
+    skip('Skip tzip not available',1);
+    skip('Skip tzip not available',1);
+    skip('Skip tzip not available',1);
+    skip('Skip tzip not available',1);
+    next;
+  }
+  
   InitializeCache($filename);
 
   TestImplementation($filename,0,0);
@@ -35,6 +69,7 @@ foreach my $filename (@files)
     skip('Skip GNU grep not available',1);
   }
 
+  TestImplementation($filename,1,1);
 }
 
 # ---------------------------------------------------------------------------
@@ -49,7 +84,7 @@ sub TestImplementation
   $testname =~ s/.*\///;
   $testname =~ s/\.t//;
 
-  my ($folder_name) = $filename =~ /\/([^\/]*)\.txt$/;
+  my ($folder_name) = $filename =~ /\/([^\/]*)\.txt.*$/;
 
   my $output_filename =
     "t/temp/${testname}_${folder_name}_${enable_cache}_${enable_grep}.stdout";
@@ -71,20 +106,22 @@ sub TestImplementation
 
   die $folder_reader unless ref $folder_reader;
 
+  my $prologue = $folder_reader->prologue;
+  print $output $prologue;
+
   # This is the main loop. It's executed once for each email
   while(!$folder_reader->end_of_file())
   {
-    $folder_reader->read_next_email();
+    my $email_text = $folder_reader->read_next_email();
 
-    print $output $folder_reader->number() . "\n";
+    print $output $$email_text;
   }
 
   $output->close();
 
-  my $compare_filename = 
-    "t/results/${testname}_${folder_name}.stdout";
+  $filename =~ s/\.(tz|bz2|gz)$//;
 
-  CheckDiffs([$compare_filename,$output_filename]);
+  CheckDiffs([$filename,$output_filename]);
 }
 
 # ---------------------------------------------------------------------------

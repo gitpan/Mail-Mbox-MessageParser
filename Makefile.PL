@@ -3,15 +3,31 @@
 
 use strict;
 use ExtUtils::MakeMaker;
+use lib 'lib';
+use Config;
+use File::Spec;
 
 require 5.004;
 
-@ARGV = Set_Install_Options(@ARGV)
-  unless (grep {/^PREFIX=/} @ARGV) || (grep {/^INSTALLDIRS=/} @ARGV);
+my @program_options = grep {/^(GREP|TZIP|GZIP|BZIP2?)=/} @ARGV;
+@ARGV = grep {!/^(GREP|TZIP|GZIP|BZIP2?)=/} @ARGV;
 
-my %makefile_attributes = Compute_Makefile_Attributes(@ARGV);
+unless ((grep {/^PREFIX=/} @ARGV) || (grep {/^INSTALLDIRS=/} @ARGV))
+{
+  @ARGV = Set_Install_Options(@ARGV);
+}
+
+print "\n","-"x78,"\n\n";
+
+my %makefile_attributes = Compute_Makefile_Attributes();
 
 WriteMakefile( %makefile_attributes );
+
+print "\n","-"x78,"\n\n";
+
+Configure(@program_options);
+
+exit;
 
 # --------------------------------------------------------------------------
 
@@ -40,9 +56,208 @@ sub Set_Install_Options
 
 # --------------------------------------------------------------------------
 
+sub Compute_Makefile_Attributes
+{
+  my %makefile_attributes = (
+    'NAME'  => 'Mail::Mbox::MessageParser',
+    'VERSION_FROM' => 'lib/Mail/Mbox/MessageParser.pm',
+    'dist'  => { COMPRESS => 'gzip -9', SUFFIX => 'gz' },
+    'clean' => { FILES => 't/temp' },
+    'PM' => {
+      'lib/Mail/Mbox/MessageParser.pm' => '$(INST_LIB)/Mail/Mbox/MessageParser.pm',
+      'lib/Mail/Mbox/MessageParser/Cache.pm' => '$(INST_LIB)/Mail/Mbox/MessageParser/Cache.pm',
+      'lib/Mail/Mbox/MessageParser/Grep.pm' => '$(INST_LIB)/Mail/Mbox/MessageParser/Grep.pm',
+      'lib/Mail/Mbox/MessageParser/Perl.pm' => '$(INST_LIB)/Mail/Mbox/MessageParser/Perl.pm',
+    },
+    'PREREQ_PM' => { 'Storable' => 0 },
+    'DIR' => [ ],
+  );
+
+  return %makefile_attributes;
+}
+
+# --------------------------------------------------------------------------
+
+sub Configure
+{
+  my @args = @_;
+
+  my %locations = Get_Program_Locations(@args);
+
+  Update_Code('lib/Mail/Mbox/MessageParser.pm', \%locations);
+  Update_Code('lib/Test/Utils.pm', \%locations);
+}
+
+# --------------------------------------------------------------------------
+
+sub Update_Code
+{
+  my $filename = shift;
+  my %locations = %{ shift @_ };
+
+  my $code = _Read_Code($filename);
+
+  foreach my $program (keys %locations)
+  {
+    if (defined $locations{$program})
+    {
+      $locations{$program} = "\'$locations{$program}\'";
+    }
+    else
+    {
+      $locations{$program} = "undef";
+    }
+  }
+
+  if ($code =~ /(PROGRAMS = \(.*?\))/s)
+  {
+    my $original_programs = $1;
+    my $new_programs = $original_programs;
+
+    $new_programs =~ s/('grep' *=> *).*?,/$1$locations{grep},/;
+    $new_programs =~ s/('tzip' *=> *).*?,/$1$locations{tzip},/;
+    $new_programs =~ s/('gzip' *=> *).*?,/$1$locations{gzip},/;
+    $new_programs =~ s/('compress' *=> *).*?,/$1$locations{gzip},/;
+    $new_programs =~ s/('bzip' *=> *).*?,/$1$locations{bzip},/;
+    $new_programs =~ s/('bzip2' *=> *).*?,/$1$locations{bzip2},/;
+
+    $code =~ s/\Q$original_programs\E/$new_programs/;
+  }
+  else
+  {
+    die "Couldn't find programs hash in MessageParser.pm";
+  }
+
+  _Write_Code($filename, $code);
+}
+
+# --------------------------------------------------------------------------
+
+sub _Read_Code
+{
+  my $filename = shift;
+
+  local $/ = undef;
+
+  open SOURCE, $filename
+    or die "Couldn't open file \"$filename\": $!";
+  my $code = <SOURCE>;
+  close SOURCE;
+
+  return $code;
+}
+
+# --------------------------------------------------------------------------
+
+sub _Write_Code
+{
+  my $filename = shift;
+  my $code = shift;
+
+  open SOURCE, ">$filename"
+    or die "Couldn't open grepmail file \"$filename\": $!";
+  print SOURCE $code;
+  close SOURCE;
+}
+
+# --------------------------------------------------------------------------
+
+sub Get_Program_Locations
+{
+  my @args = @_;
+
+  my %defaults = (
+      'grep'     => 'grep',
+      'tzip'     => 'tzip',
+      'gzip'     => 'gzip',
+      'bzip2'    => 'bzip2',
+      'bzip'     => 'bzip2',
+  );
+
+  my %programs = (
+      'grep'     => undef,
+      'tzip'     => undef,
+      'gzip'     => undef,
+      'bzip2'    => undef,
+      'bzip'     => undef,
+  );
+
+  foreach my $arg (@args)
+  {
+    my ($var,$value) = $arg =~ /^(.*?)=(.*)$/;
+    $value = undef if $value eq '';
+    $programs{'grep'} = $value if $var eq 'GREP';
+    $programs{'tzip'} = $value if $var eq 'TZIP';
+    $programs{'bzip'} = $value if $var eq 'BZIP';
+    $programs{'gzip'} = $value if $var eq 'GZIP';
+    $programs{'bzip2'} = $value if $var eq 'BZIP2';
+  }
+
+  return %programs if grep {/^(GREP|TZIP|GZIP|BZIP2?)=/} @args;
+
+  print<<EOF;
+You must now specify the location of external programs for decompressing
+compressed folders. You must specify the full path--otherwise you may
+accidentally execute a trojan version of the decompression program.  You can
+enter "none" to disable support for decompressing files of a given type.
+
+EOF
+
+  my @path = split /$Config{path_sep}/, $ENV{PATH};
+
+  foreach my $program (sort keys %programs)
+  {
+    my $name = $Config{$program} || $defaults{$program};
+
+    my $full_path = Find_Program($name, [@path]);
+    $full_path = $name if !defined $full_path && MM->maybe_command($name);
+
+    $full_path = 'none' if !defined $full_path || $full_path eq '';
+
+    my $choice = ExtUtils::MakeMaker::prompt(
+      "Where can I find your \"$program\" executable?" => $full_path);
+
+    $programs{$program} = undef, next if $choice eq 'none';
+
+    if (File::Spec->file_name_is_absolute($choice) &&
+      MM->maybe_command($choice))
+    {
+      $programs{$program} = $choice;
+      next;
+    }
+    else
+    {
+      print "\"$choice\" does not appear to be a valid executable\n";
+      redo;
+    }
+  }
+
+  return %programs;
+}
+
+# --------------------------------------------------------------------------
+
+sub Find_Program
+{
+  my $program = shift;
+  my @path = @{ shift @_ };
+
+  my $param = (($program =~ s/(\s+.*)//) ? $1 : '');
+
+  for my $dir (@path)
+  {
+    my $abs = File::Spec->catfile($dir, $program);
+    return $abs.$param if $abs = MM->maybe_command($abs);
+  }
+
+  return undef;
+}
+
+# ---------------------------------------------------------------------------
+
 # Figures out the user's home directory in Unix
 
-sub Get_Home_Directory()
+sub Get_Home_Directory
 {
   # Get the user's home directory. First try the password info, then the
   # registry (if it's a Windows machine), then any HOME environment variable.
@@ -59,61 +274,16 @@ home directory using both getpwuid and your HOME environment variable.
 
 # --------------------------------------------------------------------------
 
-sub Compute_Makefile_Attributes
-{
-  my @args = @_;
-
-  my %makefile_attributes = (
-    'NAME'  => 'Mail::Mbox::MessageParser',
-    'VERSION_FROM' => 'lib/Mail/Mbox/MessageParser.pm',
-    'PM' => {
-      'lib/Mail/Mbox/MessageParser.pm' =>
-        '$(INST_LIB)/Mail/Mbox/MessageParser.pm',
-      'lib/Mail/Mbox/MessageParser/Grep.pm' =>
-        '$(INST_LIB)/Mail/Mbox/MessageParser/Grep.pm',
-      'lib/Mail/Mbox/MessageParser/Cache.pm' =>
-        '$(INST_LIB)/Mail/Mbox/MessageParser/Cache.pm',
-      'lib/Mail/Mbox/MessageParser/Perl.pm' =>
-        '$(INST_LIB)/Mail/Mbox/MessageParser/Perl.pm',
-    },
-
-    'dist'  => { COMPRESS => 'gzip -9', SUFFIX => 'gz' },
-    'clean' => { FILES => 't/temp' },
-    'PREREQ_PM' => { 'Storable' => 0 },
-    'DIR' => [ ],
-  );
-
-  return %makefile_attributes;
-}
-
-# --------------------------------------------------------------------------
-
 # So that "SUPER" works right
 package MY;
 
-sub test {
-  my $inherited = shift->SUPER::test(@_);
-  $inherited =~ s#testdb ::#testdb :: copy_test_modules#;
-  $inherited =~ s#test ::#test :: copy_test_modules#;
-  $inherited;
-}
-
 sub postamble
 {
-# Add a target for testing the speed, and one for testing
-# functionality
 '
-copy_test_modules: $(TO_INST_PM)
-	@$(PERLRUNINST) "-MExtUtils::Install" \
-	-e "pm_to_blib({qw{lib/Test/CompareFiles.pm $(INST_LIB)/Test/CompareFiles.pm}},\'$(INST_LIB)/auto\',\'$(PM_FILTER)\')"
-
 testspeed :: pure_all
-	PERL_DL_NONLAZY=1 $(FULLPERLRUN) "-I$(INST_LIB)" \
+	PERL_DL_NONLAZY=1 $(PERLRUN) "-I$(INST_LIB)" \
 	  "-I$(INST_ARCHLIB)" t/speed.pl
-
-testfunc :: pure_all
-	PERL_DL_NONLAZY=1 $(FULLPERLRUN) "-I$(INST_LIB)" \
-	  "-I$(INST_ARCHLIB)" t/*.t
 ';
 }
+
 

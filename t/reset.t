@@ -1,19 +1,21 @@
 #!/usr/bin/perl
 
+# Test that we can reset a file midway through parsing.
+
 use strict;
-use warnings 'all';
 
 use Test;
+use lib 'lib';
 use Mail::Mbox::MessageParser;
 use Mail::Mbox::MessageParser::Cache;
 use Mail::Mbox::MessageParser::Grep;
 use Mail::Mbox::MessageParser::Perl;
-use Test::CompareFiles;
+use Test::Utils;
 use FileHandle;
 
 my @files = <t/mailboxes/*.txt>;
 
-mkdir 't/temp';
+mkdir 't/temp', 0700;
 
 plan (tests => 6 * scalar (@files));
 
@@ -26,14 +28,31 @@ foreach my $filename (@files)
   print "Testing partial mailbox reset with Cache implementation\n";
   TestPartialRead($filename,1,0);
   print "Testing partial mailbox reset with Grep implementation\n";
-  TestPartialRead($filename,0,1);
+
+  if (defined $Mail::Mbox::MessageParser::PROGRAMS{'grep'})
+  {
+    TestPartialRead($filename,0,1);
+  }
+  else
+  {
+    skip('Skip GNU grep not available',1);
+  }
+
 
   print "Testing full mailbox reset with Perl implementation\n";
   TestFullRead($filename,0,0);
   print "Testing full mailbox reset with Cache implementation\n";
   TestFullRead($filename,1,0);
   print "Testing full mailbox reset with Grep implementation\n";
-  TestFullRead($filename,0,1);
+
+  if (defined $Mail::Mbox::MessageParser::PROGRAMS{'grep'})
+  {
+    TestFullRead($filename,0,1);
+  }
+  else
+  {
+    skip('Skip GNU grep not available',1);
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -51,7 +70,7 @@ sub TestPartialRead
   my ($folder_name) = $filename =~ /\/([^\/]*)\.txt$/;
 
   my $output_filename =
-    "t/temp/${testname}_${folder_name}_${enable_cache}_${enable_grep}.testoutput";
+    "t/temp/${testname}_${folder_name}_${enable_cache}_${enable_grep}.stdout";
 
   my $output = new FileHandle(">$output_filename");
 
@@ -67,6 +86,8 @@ sub TestPartialRead
         'enable_cache' => $enable_cache,
         'enable_grep' => $enable_grep,
       } );
+
+  die $folder_reader unless ref $folder_reader;
 
   # Read just 1 email
   $folder_reader->read_next_email();
@@ -90,9 +111,9 @@ sub TestPartialRead
   $output->close();
 
   my $compare_filename = 
-    "t/results/${testname}_${folder_name}.realoutput";
+    "t/results/${testname}_${folder_name}.stdout";
 
-  CheckDiffs($compare_filename,$output_filename);
+  CheckDiffs([$compare_filename,$output_filename]);
 }
 
 # ---------------------------------------------------------------------------
@@ -110,7 +131,7 @@ sub TestFullRead
   my ($folder_name) = $filename =~ /\/([^\/]*)\.txt$/;
 
   my $output_filename =
-    "t/temp/${testname}_${folder_name}_${enable_cache}_${enable_grep}.testoutput";
+    "t/temp/${testname}_${folder_name}_${enable_cache}_${enable_grep}.stdout";
 
   my $output = new FileHandle(">$output_filename");
 
@@ -126,6 +147,8 @@ sub TestFullRead
         'enable_cache' => $enable_cache,
         'enable_grep' => $enable_grep,
       } );
+
+  die $folder_reader unless ref $folder_reader;
 
   # Read whole mailbox
   while(!$folder_reader->end_of_file())
@@ -152,38 +175,10 @@ sub TestFullRead
   $output->close();
 
   my $compare_filename = 
-    "t/results/${testname}_${folder_name}.realoutput";
+    "t/results/${testname}_${folder_name}.stdout";
 
-  CheckDiffs($compare_filename,$output_filename);
+  CheckDiffs([$compare_filename,$output_filename]);
 }
 
 # ---------------------------------------------------------------------------
-
-sub InitializeCache
-{
-  my $filename = shift;
-
-  Mail::Mbox::MessageParser::SETUP_CACHE({'file_name' => 't/temp/cache'});
-  Mail::Mbox::MessageParser::CLEAR_CACHE();
-
-  my $filehandle = new FileHandle($filename);
-
-  my $folder_reader =
-      new Mail::Mbox::MessageParser( {
-        'file_name' => $filename,
-        'file_handle' => $filehandle,
-        'enable_cache' => 1,
-        'enable_grep' => 0,
-      } );
-
-  # This is the main loop. It's executed once for each email
-  while(!$folder_reader->end_of_file())
-  {
-    $folder_reader->read_next_email();
-  }
-
-  $filehandle->close();
-
-  Mail::Mbox::MessageParser::WRITE_CACHE();
-}
 
