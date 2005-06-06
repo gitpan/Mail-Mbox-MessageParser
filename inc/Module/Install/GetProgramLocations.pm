@@ -227,7 +227,7 @@ sub _Prompt_User_For_Program_Locations
       }
 
       $program_info{$program_name} =
-        { path => $choice, type => undef, version => $version };
+        { path => $choice, type => $type, version => $version };
     }
   }
 
@@ -245,30 +245,29 @@ sub _Program_Version_Is_Valid
 
   if (exists $info{$program_name}{'types'})
   {
-    my $program_version;
+    my $version;
 
-    TYPE: foreach my $version (keys %{$info{$program_name}{'types'}})
+    TYPE: foreach my $type (keys %{$info{$program_name}{'types'}})
     {
-      $program_version = 
-        &{$info{$program_name}{'types'}{$version}{'fetch'}}($program);
+      $version = &{$info{$program_name}{'types'}{$type}{'fetch'}}($program);
 
-      next TYPE unless defined $program_version;
+      next TYPE unless defined $version;
 
-      if ($self->Version_Matches_Range($program_version,
-        $info{$program_name}{'types'}{$version}{'numbers'}))
+      if ($self->Version_Matches_Range($version,
+        $info{$program_name}{'types'}{$type}{'numbers'}))
       {
-        return (1,$version,$program_version);
+        return (1,$type,$version);
       }
     }
 
-    my $program_version_string = '<UNKNOWN>';
-    $program_version_string = $program_version if defined $program_version;
-    warn "\"$program\" version $program_version_string is not valid for any of the following:\n";
+    my $version_string = '<UNKNOWN>';
+    $version_string = $version if defined $version;
+    warn "\"$program\" version $version_string is not valid for any of the following:\n";
 
-    foreach my $version (keys %{$info{$program_name}{'types'}})
+    foreach my $type (keys %{$info{$program_name}{'types'}})
     {
-      warn "  $version => " .
-        $info{$program_name}{'types'}{$version}{'numbers'} . "\n";
+      warn "  $type => " .
+        $info{$program_name}{'types'}{$type}{'numbers'} . "\n";
     }
 
     return (0,undef,undef);
@@ -396,5 +395,5 @@ sub Get_Bzip2_Version
 
 # ---------------------------------------------------------------------------
 
-#line 618
+#line 617
 

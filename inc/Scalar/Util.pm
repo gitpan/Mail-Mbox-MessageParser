@@ -1,4 +1,4 @@
-#line 1 "inc/Scalar/Util.pm - /System/Library/Perl/5.8.1/darwin-thread-multi-2level/Scalar/Util.pm"
+#line 1 "inc/Scalar/Util.pm - /System/Library/Perl/5.8.6/Scalar/Util.pm"
 # Scalar::Util.pm
 #
 # Copyright (c) 1997-2004 Graham Barr <gbarr@pobox.com>. All rights reserved.
