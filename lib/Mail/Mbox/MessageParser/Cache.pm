@@ -75,7 +75,7 @@ sub _read_prologue
 {
   my $self = shift;
 
-  dprint "Reading mailbox prologue using grep";
+  dprint "Reading mailbox prologue using cache";
 
   my $prologue_length = $CACHE->{$self->{'file_name'}}{'emails'}[0]{'offset'};
 
@@ -84,20 +84,6 @@ sub _read_prologue
     $bytes_read += read($self->{'file_handle'}, $self->{'prologue'},
       $prologue_length-$bytes_read, $bytes_read);
   } while ($bytes_read != $prologue_length);
-}
-
-#-------------------------------------------------------------------------------
-
-sub _print_debug_information
-{
-  return unless $DEBUG;
-
-  my $self = shift;
-
-  $self->SUPER::_print_debug_information();
-
-  dprint "Valid cache entry exists: " .
-    ($#{ $CACHE->{$self->{'file_name'}}{'emails'} } != -1 ? "Yes" : "No");
 }
 
 #-------------------------------------------------------------------------------
@@ -180,6 +166,20 @@ sub read_next_email
   $self->SUPER::read_next_email();
 
   return \$email;
+}
+
+#-------------------------------------------------------------------------------
+
+sub _print_debug_information
+{
+  return unless $DEBUG;
+
+  my $self = shift;
+
+  $self->SUPER::_print_debug_information();
+
+  dprint "Valid cache entry exists: " .
+    ($#{ $CACHE->{$self->{'file_name'}}{'emails'} } != -1 ? "Yes" : "No");
 }
 
 1;

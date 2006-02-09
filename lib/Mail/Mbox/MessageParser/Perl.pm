@@ -12,7 +12,7 @@ use Mail::Mbox::MessageParser::Config;
 
 use vars qw( $VERSION $DEBUG );
 
-$VERSION = sprintf "%d.%02d%02d", q/1.60.0/ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%02d%02d", q/1.60.1/ =~ /(\d+)/g;
 
 *DEBUG = \$Mail::Mbox::MessageParser::DEBUG;
 *dprint = \&Mail::Mbox::MessageParser::dprint;
@@ -158,31 +158,21 @@ sub read_next_email
   $self->{'email_offset'} = $self->{'CURRENT_OFFSET'};
 
   $self->{'START_OF_EMAIL'} = $self->{'END_OF_EMAIL'};
-
+  $self->{'END_OF_EMAIL'} = length($self->{'READ_BUFFER'});
 
   # Slurp in an entire multipart email (but continue looking for the next
   # header so that we can get any following newlines as well)
   unless ($self->_read_header())
   {
-    $self->{'END_OF_EMAIL'} = length($self->{'READ_BUFFER'});
     return $self->_extract_email_and_finalize();
   }
 
-  my $boundary = $self->_multipart_boundary();
-
-  if (defined $boundary)
+  unless ($self->_read_email_parts())
   {
-    unless ($self->_read_multipart_email($boundary))
-    {
-      $self->{'END_OF_EMAIL'} = length($self->{'READ_BUFFER'});
-      return $self->_extract_email_and_finalize();
-    }
+    return $self->_extract_email_and_finalize();
   }
 
-  unless ($self->_read_rest_of_email())
-  {
-    $self->{'END_OF_EMAIL'} = length($self->{'READ_BUFFER'});
-  }
+  $self->_read_rest_of_email();
 
   return $self->_extract_email_and_finalize();
 }
@@ -193,8 +183,10 @@ sub _read_rest_of_email
 {
   my $self = shift;
 
+  my $already_read_a_chunk = 0;
+
   # Look for the start of the next email
-  while(1)
+  while (1)
   {
     while ($self->{'READ_BUFFER'} =~
         m/$Mail::Mbox::MessageParser::Config{'from_pattern'}/mg)
@@ -221,28 +213,24 @@ sub _read_rest_of_email
       next unless $end_of_string =~ /$endline$endline$/;
 
       # Found the next email!
-      return 1;
+      return;
     }
 
     # Didn't find next email in current buffer. Most likely we need to read some
     # more of the mailbox. Shift the current email to the front of the buffer
     # unless we've already done so.
-    substr($self->{'READ_BUFFER'},0,$self->{'START_OF_EMAIL'}) = '';
+    $self->{'READ_BUFFER'} =
+      substr($self->{'READ_BUFFER'}, $self->{'START_OF_EMAIL'});
     $self->{'START_OF_EMAIL'} = 0;
 
     # Start looking at the end of the buffer, but back up some in case the
     # edge of the newly read buffer contains the start of a new header. I
     # believe the RFC says header lines can be at most 90 characters long.
-    my $search_position = length($self->{'READ_BUFFER'}) - 90;
-    $search_position = 0 if $search_position < 0;
-
-    if ($self->_read_chunk())
+    unless ($self->_read_until_match(
+      qr/$Mail::Mbox::MessageParser::Config{'from_pattern'}/,90))
     {
-      pos($self->{'READ_BUFFER'}) = $search_position;
-    }
-    else
-    {
-      return 0;
+      $self->{'END_OF_EMAIL'} = length($self->{'READ_BUFFER'});
+      return;
     }
   }
 }
@@ -273,32 +261,19 @@ sub _multipart_boundary
 
 #-------------------------------------------------------------------------------
 
-sub _read_multipart_email
+sub _read_email_parts
 {
   my $self = shift;
-  my $boundary = shift;
 
+  my $boundary = $self->_multipart_boundary();
+
+  return 1 unless defined $boundary;
+
+  # RFC 1521 says the boundary can be no longer than 70 characters. Back up a
+  # little more than that.
   my $endline = $self->{'endline'};
-
-  # Now read until we see the ending boundary
-  while ($self->{'READ_BUFFER'} !~ m/^--\Q$boundary\E--$endline/mg)
-  {
-    # Start looking at the end of the buffer, but back up some in case the
-    # edge of the newly read buffer contains the remainder of the
-    # boundary. RFC 1521 says the boundary can be no longer than 70
-    # characters.
-    my $search_position = length($self->{'READ_BUFFER'}) - 76;
-    $search_position = 0 if $search_position < 0;
-
-    if ($self->_read_chunk())
-    {
-      pos($self->{'READ_BUFFER'}) = $search_position;
-    }
-    else
-    {
-      return 0;
-    }
-  }
+  $self->_read_until_match(qr/^--\Q$boundary\E--$endline/,76)
+    or return 0;
 
   return 1;
 }
@@ -329,24 +304,41 @@ sub _extract_email_and_finalize
 sub _read_header
 {
   my $self = shift;
+ 
+  $self->_read_until_match(qr/$self->{'endline'}$self->{'endline'}/,4)
+      or return 0;
+ 
+  $self->{'START_OF_BODY'} = pos($self->{'READ_BUFFER'});
+ 
+  return 1;
+}
+
+#-------------------------------------------------------------------------------
+
+sub _read_until_match
+{
+  my $self = shift;
+  my $pattern = shift;
+  my $backup = shift;
 
   # Look for the end of the header
-  while ($self->{'READ_BUFFER'} !~ m/$self->{'endline'}$self->{'endline'}/mg)
+  my $already_read_a_chunk = 0;
+
+  while (!defined pos($self->{'READ_BUFFER'}) ||
+    $self->{'READ_BUFFER'} !~ m/$pattern/mg)
   {
     # Start looking at the end of the buffer, but back up some in case the edge
-    # of the newly read buffer contains the remainder of the newlines.
-    my $search_position = length($self->{'READ_BUFFER'}) - 4;
+    # of the newly read buffer contains part of the pattern.
+    my $search_position = length($self->{'READ_BUFFER'}) - $backup;
     $search_position = 0 if $search_position < 0;
 
-    unless ($self->_read_chunk())
-    {
-      return 0;
-    }
+    $self->{'READ_CHUNK_SIZE'} *= 2 if $already_read_a_chunk;
+    $already_read_a_chunk = 1;
+
+    return 0 unless $self->_read_chunk();
 
     pos($self->{'READ_BUFFER'}) = $search_position;
   }
-
-  $self->{'START_OF_BODY'} = pos($self->{'READ_BUFFER'});
 
   return 1;
 }
@@ -371,24 +363,36 @@ sub _read_chunk
     {
       # < $self->{'file_handle'} > doesn't work, so we use readline
       $self->{'READ_BUFFER'} = readline($self->{'file_handle'});
-      return 1;
+	  return 1;
     }
   }
   else
   {
-    if (read($self->{'file_handle'}, $self->{'READ_BUFFER'},
-      $self->{'READ_CHUNK_SIZE'}, length($self->{'READ_BUFFER'})))
+    my $total_amount_read = 0;
+    my $amount_read = 0;
+
+    while ($total_amount_read < $self->{'READ_CHUNK_SIZE'})
     {
-      $self->{'READ_CHUNK_SIZE'} *= 2;
-      return 1;
+      $amount_read = read($self->{'file_handle'}, $self->{'READ_BUFFER'},
+        $self->{'READ_CHUNK_SIZE'} - $total_amount_read,
+        length($self->{'READ_BUFFER'}));
+
+      if ($amount_read == 0)
+      {
+        return 1 unless $total_amount_read == 0;
+
+        $self->{'end_of_file'} = 1;
+        return 0;
+      }
+
+      $total_amount_read += $amount_read;
     }
-    else
-    {
-      $self->{'end_of_file'} = 1;
-      return 0;
-    }
+
+	return 1;
   }
 }
+
+#-------------------------------------------------------------------------------
 
 1;
 
@@ -416,7 +420,7 @@ Mail::Mbox::MessageParser::Perl - A Perl-based mbox folder reader
     } );
 
   die $folder_reader unless ref $folder_reader;
-  
+
   # Any newlines or such before the start of the first email
   my $prologue = $folder_reader->prologue;
   print $prologue;
