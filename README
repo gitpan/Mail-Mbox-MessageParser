@@ -7,15 +7,12 @@ information, GNU grep, or highly optimized Perl.
 
 NEW IN THIS VERSION
 
-Version 1.4002: Thu Feb  9 2006
-- Dropped tzip support. The program seems poorly supported and buggy. (I can't
-  get it to run right on Mac, for example.)
-- An invalid cache is detected and overwritten. This can occur if one changes
-  architectures, or if the cache is otherwise corrupted. 
-- Fixed a major memory consumption bug in the Perl implementation, where the
-  read buffer would grow exponentially. This caused the module to use memory
-  proportional to the size of the mailbox, rather than the size of the largest
-  email.
+Version 1.4003: Sun May 21 2006
+- Fixed a bug where multi-part emails having boundaries containing characters
+	like " " and "+" would cause the remainder of the mailbox to be treated as
+	part of the email with the boundary.
+- Fixed a previously unrevealed fault in the mailbox for the separators test.
+	(The last message's separator wasn't used correctly.)
 
 
 MODULE DEPENDENCIES
