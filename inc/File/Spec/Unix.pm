@@ -1,4 +1,4 @@
-#line 1 "inc/File/Spec/Unix.pm - /System/Library/Perl/5.8.6/File/Spec/Unix.pm"
+#line 1 "inc/File/Spec/Unix.pm - /System/Library/Perl/5.8.6/darwin-thread-multi-2level/File/Spec/Unix.pm"
 package File::Spec::Unix;
 
 use strict;
@@ -6,7 +6,7 @@ use vars qw($VERSION);
 
 $VERSION = '1.5';
 
-#line 34
+#line 41
 
 sub canonpath {
     my ($self,$path) = @_;
@@ -17,23 +17,25 @@ sub canonpath {
     # may be interpreted in an implementation-defined manner, although
     # more than two leading slashes shall be treated as a single slash.")
     my $node = '';
-    if ( $^O =~ m/^(?:qnx|nto|cygwin)$/ && $path =~ s:^(//[^/]+)(/|\z):/:s ) {
+    my $double_slashes_special = $self->isa("File::Spec::Cygwin") || $^O =~ m/^(?:qnx|nto)$/;
+    if ( $double_slashes_special && $path =~ s:^(//[^/]+)(/|\z):/:s ) {
       $node = $1;
     }
     # This used to be
-    # $path =~ s|/+|/|g unless($^O eq 'cygwin');
+    # $path =~ s|/+|/|g unless ($^O eq 'cygwin');
     # but that made tests 29, 30, 35, 46, and 213 (as of #13272) to fail
     # (Mainly because trailing "" directories didn't get stripped).
     # Why would cygwin avoid collapsing multiple slashes into one? --jhi
     $path =~ s|/+|/|g;                             # xx////xx  -> xx/xx
     $path =~ s@(/\.)+(/|\Z(?!\n))@/@g;             # xx/././xx -> xx/xx
     $path =~ s|^(\./)+||s unless $path eq "./";    # ./xx      -> xx
-    $path =~ s|^/(\.\./)+|/|s;                     # /../../xx -> xx
+    $path =~ s|^/(\.\./)+|/|;                      # /../../xx -> xx
+    $path =~ s|^/\.\.$|/|;                         # /..       -> /
     $path =~ s|/\Z(?!\n)|| unless $path eq "/";          # xx/       -> xx
     return "$node$path";
 }
 
-#line 69
+#line 78
 
 sub catdir {
     my $self = shift;
@@ -41,7 +43,7 @@ sub catdir {
     $self->canonpath(join('/', @_, '')); # '' because need a trailing '/'
 }
 
-#line 82
+#line 91
 
 sub catfile {
     my $self = shift;
@@ -52,19 +54,19 @@ sub catfile {
     return $dir.$file;
 }
 
-#line 97
+#line 106
 
 sub curdir () { '.' }
 
-#line 105
+#line 114
 
 sub devnull () { '/dev/null' }
 
-#line 113
+#line 122
 
 sub rootdir () { '/' }
 
-#line 129
+#line 138
 
 my $tmpdir;
 sub _tmpdir {
@@ -90,33 +92,32 @@ sub _tmpdir {
 
 sub tmpdir {
     return $tmpdir if defined $tmpdir;
-    my $self = shift;
-    $tmpdir = $self->_tmpdir( $ENV{TMPDIR}, "/tmp" );
+    $tmpdir = $_[0]->_tmpdir( $ENV{TMPDIR}, "/tmp" );
 }
 
-#line 163
+#line 171
 
 sub updir () { '..' }
 
-#line 172
+#line 180
 
 sub no_upwards {
     my $self = shift;
     return grep(!/^\.{1,2}\Z(?!\n)/s, @_);
 }
 
-#line 184
+#line 192
 
 sub case_tolerant () { 0 }
 
-#line 196
+#line 204
 
 sub file_name_is_absolute {
     my ($self,$file) = @_;
     return scalar($file =~ m:^/:s);
 }
 
-#line 207
+#line 215
 
 sub path {
     return () unless exists $ENV{PATH};
@@ -125,14 +126,14 @@ sub path {
     return @path;
 }
 
-#line 220
+#line 228
 
 sub join {
     my $self = shift;
     return $self->catfile(@_);
 }
 
-#line 245
+#line 253
 
 sub splitpath {
     my ($self,$path, $nofile) = @_;
@@ -152,14 +153,14 @@ sub splitpath {
 }
 
 
-#line 287
+#line 295
 
 sub splitdir {
     return split m|/|, $_[1], -1;  # Preserve trailing fields
 }
 
 
-#line 301
+#line 309
 
 sub catpath {
     my ($self,$volume,$directory,$file) = @_;
@@ -178,59 +179,64 @@ sub catpath {
     return $directory ;
 }
 
-#line 346
+#line 354
 
 sub abs2rel {
     my($self,$path,$base) = @_;
+    $base = $self->_cwd() unless defined $base and length $base;
 
-    # Clean up $path
-    if ( ! $self->file_name_is_absolute( $path ) ) {
-        $path = $self->rel2abs( $path ) ;
+    ($path, $base) = map $self->canonpath($_), $path, $base;
+
+    if (grep $self->file_name_is_absolute($_), $path, $base) {
+	($path, $base) = map $self->rel2abs($_), $path, $base;
     }
     else {
-        $path = $self->canonpath( $path ) ;
+	# save a couple of cwd()s if both paths are relative
+	($path, $base) = map $self->catdir('/', $_), $path, $base;
     }
 
-    # Figure out the effective $base and clean it up.
-    if ( !defined( $base ) || $base eq '' ) {
-        $base = $self->_cwd();
-    }
-    elsif ( ! $self->file_name_is_absolute( $base ) ) {
-        $base = $self->rel2abs( $base ) ;
-    }
-    else {
-        $base = $self->canonpath( $base ) ;
+    my ($path_volume) = $self->splitpath($path, 1);
+    my ($base_volume) = $self->splitpath($base, 1);
+
+    # Can't relativize across volumes
+    return $path unless $path_volume eq $base_volume;
+
+    my $path_directories = ($self->splitpath($path, 1))[1];
+    my $base_directories = ($self->splitpath($base, 1))[1];
+
+    # For UNC paths, the user might give a volume like //foo/bar that
+    # strictly speaking has no directory portion.  Treat it as if it
+    # had the root directory for that volume.
+    if (!length($base_directories) and $self->file_name_is_absolute($base)) {
+      $base_directories = $self->rootdir;
     }
 
     # Now, remove all leading components that are the same
-    my @pathchunks = $self->splitdir( $path);
-    my @basechunks = $self->splitdir( $base);
+    my @pathchunks = $self->splitdir( $path_directories );
+    my @basechunks = $self->splitdir( $base_directories );
 
-    while (@pathchunks && @basechunks && $pathchunks[0] eq $basechunks[0]) {
+    if ($base_directories eq $self->rootdir) {
+      shift @pathchunks;
+      return $self->canonpath( $self->catpath('', $self->catdir( @pathchunks ), '') );
+    }
+
+    while (@pathchunks && @basechunks && $self->_same($pathchunks[0], $basechunks[0])) {
         shift @pathchunks ;
         shift @basechunks ;
     }
-
-    $path = CORE::join( '/', @pathchunks );
-    $base = CORE::join( '/', @basechunks );
+    return $self->curdir unless @pathchunks || @basechunks;
 
     # $base now contains the directories the resulting relative path 
-    # must ascend out of before it can descend to $path_directory.  So, 
-    # replace all names with $parentDir
-    $base =~ s|[^/]+|..|g ;
-
-    # Glue the two together, using a separator if necessary, and preventing an
-    # empty result.
-    if ( $path ne '' && $base ne '' ) {
-        $path = "$base/$path" ;
-    } else {
-        $path = "$base$path" ;
-    }
-
-    return $self->canonpath( $path ) ;
+    # must ascend out of before it can descend to $path_directory.
+    my $result_dirs = $self->catdir( ($self->updir) x @basechunks, @pathchunks );
+    return $self->canonpath( $self->catpath('', $result_dirs, '') );
 }
 
-#line 422
+sub _same {
+  $_[1] eq $_[2];
+}
+
+#line 435
 
 sub rel2abs {
     my ($self,$path,$base ) = @_;
@@ -255,7 +261,7 @@ sub rel2abs {
     return $self->canonpath( $path ) ;
 }
 
-#line 453
+#line 473
 
 # Internal routine to File::Spec, no point in making this public since
 # it is the standard Cwd interface.  Most of the platform-specific
@@ -264,5 +270,40 @@ sub _cwd {
     require Cwd;
     Cwd::cwd();
 }
+
+
+# Internal method to reduce xx\..\yy -> yy
+sub _collapse {
+    my($fs, $path) = @_;
+
+    my $updir  = $fs->updir;
+    my $curdir = $fs->curdir;
+
+    my($vol, $dirs, $file) = $fs->splitpath($path);
+    my @dirs = $fs->splitdir($dirs);
+    pop @dirs if @dirs && $dirs[-1] eq '';
+
+    my @collapsed;
+    foreach my $dir (@dirs) {
+        if( $dir eq $updir              and   # if we have an updir
+            @collapsed                  and   # and something to collapse
+            length $collapsed[-1]       and   # and its not the rootdir
+            $collapsed[-1] ne $updir    and   # nor another updir
+            $collapsed[-1] ne $curdir         # nor the curdir
+          ) 
+        {                                     # then
+            pop @collapsed;                   # collapse
+        }
+        else {                                # else
+            push @collapsed, $dir;            # just hang onto it
+        }
+    }
+
+    return $fs->catpath($vol,
+                        $fs->catdir(@collapsed),
+                        $file
+                       );
+}
+
 
 1;

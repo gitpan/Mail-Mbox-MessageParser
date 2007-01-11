@@ -13,7 +13,10 @@ use Mail::Mbox::MessageParser::Config;
 use vars qw( $VERSION $DEBUG );
 use vars qw( $CACHE );
 
-$VERSION = sprintf "%d.%02d%02d", q/1.70.3/ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%02d%02d", q/1.70.4/ =~ /(\d+)/g;
+
+*ENTRY_STILL_VALID = \&Mail::Mbox::MessageParser::MetaInfo::ENTRY_STILL_VALID;
+sub ENTRY_STILL_VALID;
 
 *CACHE = \$Mail::Mbox::MessageParser::MetaInfo::CACHE;
 
@@ -46,7 +49,12 @@ sub _init
 {
   my $self = shift;
 
-  $self->{'CURRENT_EMAIL_INDEX'} = -1;
+  # Reading grep data provides us with an array of potential email starting
+  # locations. However, due to included emails and attachments, we have to
+  # validate these locations as actually being the start of emails. As a
+  # result, there may be more "chunks" in the array than emails. So
+  # CHUNK_INDEX >= email_number-1.
+  $self->{'CHUNK_INDEX'} = -1;
 
   $self->{'READ_BUFFER'} = '';
   $self->{'START_OF_EMAIL'} = 0;
@@ -63,13 +71,27 @@ sub reset
 {
   my $self = shift;
 
-  $self->{'CURRENT_EMAIL_INDEX'} = 0;
+  $self->{'CHUNK_INDEX'} = 0;
 
   $self->{'READ_BUFFER'} = '';
   $self->{'START_OF_EMAIL'} = 0;
   $self->{'END_OF_EMAIL'} = 0;
 
   $self->SUPER::reset();
+}
+
+#-------------------------------------------------------------------------------
+
+sub end_of_file
+{
+  my $self = shift;
+
+  # Reset eof in case the file was appended to. Hopefully this works all the
+  # time. See perldoc -f seek for details.
+  seek($self->{'file_handle'},0,1) if eof $self->{'file_handle'};
+
+  return eof $self->{'file_handle'} &&
+    $self->{'END_OF_EMAIL'} == length($self->{'READ_BUFFER'});
 }
 
 #-------------------------------------------------------------------------------
@@ -96,6 +118,28 @@ sub read_next_email
 {
   my $self = shift;
 
+  unless (defined $self->{'file_name'} &&
+    ENTRY_STILL_VALID($self->{'file_name'}))
+  {
+    # Patch up the data structures for the Perl implementation
+    undef $self->{'CHUNK_INDEX'};
+    $self->{'CURRENT_LINE_NUMBER'} =
+      $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'line_number'};
+    $self->{'CURRENT_OFFSET'} =
+      $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'offset'};
+    $self->{'READ_CHUNK_SIZE'} =
+      $Mail::Mbox::MessageParser::Config{'read_chunk_size'};
+
+    # Invalidate the remaining data
+    $#{ $CACHE->{$self->{'file_name'}}{'emails'} } = $self->{'email_number'};
+
+    bless ($self, 'Mail::Mbox::MessageParser::Perl');
+
+    return $self->read_next_email();
+  }
+
+  return undef if $self->end_of_file();
+
   $self->{'email_line_number'} =
     $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'line_number'};
   $self->{'email_offset'} =
@@ -118,25 +162,24 @@ sub read_next_email
       "boundary \"" . $self->_multipart_boundary() . "\"";
 
     # Try to read the content length and use that
-		my $email_header = substr($self->{'READ_BUFFER'}, $self->{'START_OF_EMAIL'},
-			$self->{'START_OF_BODY'} - $self->{'START_OF_EMAIL'});
+    my $email_header = substr($self->{'READ_BUFFER'}, $self->{'START_OF_EMAIL'},
+      $self->{'START_OF_BODY'} - $self->{'START_OF_EMAIL'});
 
-		my $content_length = Mail::Mbox::MessageParser::_GET_HEADER_FIELD(
-			\$email_header, 'Content-Length:', $self->{'endline'});
+    my $content_length = Mail::Mbox::MessageParser::_GET_HEADER_FIELD(
+      \$email_header, 'Content-Length:', $self->{'endline'});
 
     if (defined $content_length)
-		{
-		  $content_length =~ s/Content-Length: *(\d+).*/$1/i;
-			pos($self->{'READ_BUFFER'}) = $self->{'START_OF_EMAIL'} + $content_length;
-		}
-		# Otherwise use the start of the body 
-		else
-		{
-			pos($self->{'READ_BUFFER'}) = $self->{'START_OF_BODY'};
-		}
+    {
+      $content_length =~ s/Content-Length: *(\d+).*/$1/i;
+      pos($self->{'READ_BUFFER'}) = $self->{'START_OF_EMAIL'} + $content_length;
+    }
+    # Otherwise use the start of the body 
+    else
+    {
+      pos($self->{'READ_BUFFER'}) = $self->{'START_OF_BODY'};
+    }
 
     # Reset the search and look for the start of the next email.
-    $self->{'end_of_file'} = 0;
     $self->_read_rest_of_email();
 
     return $self->_extract_email_and_finalize();
@@ -343,7 +386,7 @@ sub _read_chunk
   my $search_position = pos($self->{'READ_BUFFER'});
 
   # Reading the prologue, so use the offset of the first email
-  if ($self->{'CURRENT_EMAIL_INDEX'} == -1)
+  if ($self->{'CHUNK_INDEX'} == -1)
   {
     my $length_to_read = $CACHE->{$self->{'file_name'}}{'emails'}[0]{'offset'};
     my $total_amount_read = 0;
@@ -355,19 +398,15 @@ sub _read_chunk
 
     pos($self->{'READ_BUFFER'}) = $search_position;
 
-    $self->{'CURRENT_EMAIL_INDEX'}++;
+    $self->{'CHUNK_INDEX'}++;
   }
 
   my $last_email_index = $#{$CACHE->{$self->{'file_name'}}{'emails'}};
 
-  if ($self->{'CURRENT_EMAIL_INDEX'} == $last_email_index+1)
-  {
-    $self->{'end_of_file'} = 1;
-    return 0;
-  }
+  return 0 if $self->{'CHUNK_INDEX'} == $last_email_index+1;
 
   my $length_to_read =
-    $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'CURRENT_EMAIL_INDEX'}]{'length'};
+    $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'CHUNK_INDEX'}]{'length'};
   my $total_amount_read = 0;
 
   do {
@@ -377,7 +416,7 @@ sub _read_chunk
 
   pos($self->{'READ_BUFFER'}) = $search_position;
 
-  $self->{'CURRENT_EMAIL_INDEX'}++;
+  $self->{'CHUNK_INDEX'}++;
 
   return 1;
 }
@@ -390,11 +429,11 @@ sub _adjust_cache_data
 
   my $last_email_index = $#{$CACHE->{$self->{'file_name'}}{'emails'}};
 
-	die<<EOF
+  die<<EOF
 Error: Cannot adjust cache data. Please email the author with your mailbox to
 have him fix the problem. In the meantime, disable the grep implementation.
 EOF
-		if $self->{'email_number'} == $last_email_index;
+    if $self->{'email_number'} == $last_email_index;
 
   $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}]{'length'} +=
     $CACHE->{$self->{'file_name'}}{'emails'}[$self->{'email_number'}+1]{'length'};
@@ -409,7 +448,7 @@ EOF
 
   pop @{$CACHE->{$self->{'file_name'}}{'emails'}};
 
-  $self->{'CURRENT_EMAIL_INDEX'}--;
+  $self->{'CHUNK_INDEX'}--;
 }
 
 #-------------------------------------------------------------------------------

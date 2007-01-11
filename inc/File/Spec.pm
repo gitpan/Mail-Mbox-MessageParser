@@ -1,10 +1,10 @@
-#line 1 "inc/File/Spec.pm - /System/Library/Perl/5.8.6/File/Spec.pm"
+#line 1 "inc/File/Spec.pm - /System/Library/Perl/5.8.6/darwin-thread-multi-2level/File/Spec.pm"
 package File::Spec;
 
 use strict;
 use vars qw(@ISA $VERSION);
 
-$VERSION = '3.01';
+$VERSION = '3.23';
 $VERSION = eval $VERSION;
 
 my %module = (MacOS   => 'Mac',
@@ -13,7 +13,8 @@ my %module = (MacOS   => 'Mac',
 	      VMS     => 'VMS',
 	      epoc    => 'Epoc',
 	      NetWare => 'Win32', # Yes, File::Spec::Win32 works on NetWare.
-              dos     => 'OS2',   # Yes, File::Spec::OS2 works on DJGPP.
+	      symbian => 'Win32', # Yes, File::Spec::Win32 works on symbian.
+	      dos     => 'OS2',   # Yes, File::Spec::OS2 works on DJGPP.
 	      cygwin  => 'Cygwin');
 
 
@@ -26,4 +27,4 @@ require "File/Spec/$module.pm";
 
 __END__
 
-#line 308
+#line 337

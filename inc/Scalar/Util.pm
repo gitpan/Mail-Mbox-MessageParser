@@ -1,18 +1,20 @@
-#line 1 "inc/Scalar/Util.pm - /System/Library/Perl/5.8.6/Scalar/Util.pm"
+#line 1 "inc/Scalar/Util.pm - /System/Library/Perl/5.8.6/darwin-thread-multi-2level/Scalar/Util.pm"
 # Scalar::Util.pm
 #
-# Copyright (c) 1997-2004 Graham Barr <gbarr@pobox.com>. All rights reserved.
+# Copyright (c) 1997-2005 Graham Barr <gbarr@pobox.com>. All rights reserved.
 # This program is free software; you can redistribute it and/or
 # modify it under the same terms as Perl itself.
 
 package Scalar::Util;
 
+use strict;
+use vars qw(@ISA @EXPORT_OK $VERSION);
 require Exporter;
 require List::Util; # List::Util loads the XS
 
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(blessed dualvar reftype weaken isweak tainted readonly openhandle refaddr isvstring looks_like_number set_prototype);
-$VERSION    = "1.14";
+$VERSION    = "1.18";
 $VERSION   = eval $VERSION;
 
 sub export_fail {
@@ -52,6 +54,7 @@ sub openhandle ($) {
 
 eval <<'ESQ' unless defined &dualvar;
 
+use vars qw(@EXPORT_FAIL);
 push @EXPORT_FAIL, qw(weaken isweak dualvar isvstring set_prototype);
 
 # The code beyond here is only used if the XS is not installed
@@ -68,9 +71,15 @@ sub blessed ($) {
 
 sub refaddr($) {
   my $pkg = ref($_[0]) or return undef;
-  bless $_[0], 'Scalar::Util::Fake';
-  my $i = int($_[0]);
-  bless $_[0], $pkg;
+  if (blessed($_[0])) {
+    bless $_[0], 'Scalar::Util::Fake';
+  }
+  else {
+    $pkg = undef;
+  }
+  "$_[0]" =~ /0x(\w+)/;
+  my $i = do { local $^W; hex $1 };
+  bless $_[0], $pkg if defined $pkg;
   $i;
 }
 
@@ -123,7 +132,7 @@ sub looks_like_number {
   local $_ = shift;
 
   # checks from perlfaq4
-  return $] < 5.009002 unless defined;
+  return 0 if !defined($_) or ref($_);
   return 1 if (/^[+-]?\d+$/); # is a +/- integer
   return 1 if (/^([+-]?)(?=\d|\.\d)\d*(\.\d*)?([Ee]([+-]?\d+))?$/); # a C float
   return 1 if ($] >= 5.008 and /^(Inf(inity)?|NaN)$/i) or ($] >= 5.006001 and /^Inf$/i);
@@ -137,4 +146,4 @@ ESQ
 
 __END__
 
-#line 304
+#line 338
