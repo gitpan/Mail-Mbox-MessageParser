@@ -1,4 +1,4 @@
-#line 1 "inc/Sort/Versions.pm - /Library/Perl/5.8.1/Sort/Versions.pm"
+#line 1
 #!/usr/bin/perl
 
 # $Id: Versions.pm,v 1.9 2003/08/24 22:58:14 ed Exp $
@@ -60,7 +60,7 @@ sub versions() {
     return versioncmp($$caller_a, $$caller_b);
 }
 
-#line 149
+#line 148
 
 1;
 

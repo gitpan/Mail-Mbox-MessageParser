@@ -1,7 +1,9 @@
-#line 1 "inc/Module/Install/GetProgramLocations.pm - /Library/Perl/5.8.1/Module/Install/GetProgramLocations.pm"
+#line 1
 package Module::Install::GetProgramLocations;
 
 use strict;
+use 5.005;
+
 use Config;
 use Cwd;
 use Carp;
@@ -14,15 +16,15 @@ use vars qw( @ISA $VERSION @EXPORT );
 use Module::Install::Base;
 @ISA = qw( Module::Install::Base Exporter );
 
-@EXPORT = qw( &Get_GNU_Version
-              &Get_Bzip2_Version
+@EXPORT = qw( &get_gnu_version
+              &get_bzip2_version
             );
 
-$VERSION = sprintf "%d.%02d%02d", q/0.30.0/ =~ /(\d+)/g;
+$VERSION = sprintf "%d.%02d%02d", q/0.30.3/ =~ /(\d+)/g;
 
 # ---------------------------------------------------------------------------
 
-sub Get_Program_Locations
+sub get_program_locations
 {
   my $self = shift;
   my %info = %{ shift @_ };
@@ -31,32 +33,40 @@ sub Get_Program_Locations
   {
     croak "argname is required for $program"
       unless defined $info{$program}{'argname'};
+
+    if (exists $info{$program}{'types'}) {
+      foreach my $type (keys %{ $info{$program}{'types'} }) {
+        next unless exists $info{$program}{'types'}{$type}{'fetch'};
+
+        croak "Fetch routine must be a valid code reference"
+          unless ref $info{$program}{'types'}{$type}{'fetch'} eq "CODE" &&
+            defined &{ $info{$program}{'types'}{$type}{'fetch'} };
+      }
+    }
   }
 
-  # Module::Install says it requires perl 5.004
-  $self->requires( perl => '5.004' );
   $self->include_deps('Config',0);
   $self->include_deps('File::Spec',0);
   $self->include_deps('Sort::Versions',0);
   $self->include_deps('Cwd',0);
 
   my %user_specified_program_paths =
-    $self->_Get_User_Specified_Program_Locations(\%info);
+    $self->_get_user_specified_program_locations(\%info);
 
   if (keys %user_specified_program_paths)
   {
-    return $self->_Get_ARGV_Program_Locations(\%info,
+    return $self->_get_argv_program_locations(\%info,
       \%user_specified_program_paths);
   }
   else
   {
-    return $self->_Prompt_User_For_Program_Locations(\%info);
+    return $self->_prompt_user_for_program_locations(\%info);
   }
 }
 
 # ---------------------------------------------------------------------------
 
-sub _Get_User_Specified_Program_Locations
+sub _get_user_specified_program_locations
 {
   my $self = shift;
   my %info = %{ shift @_ };
@@ -95,7 +105,7 @@ sub _Get_User_Specified_Program_Locations
 
 # ---------------------------------------------------------------------------
 
-sub _Get_ARGV_Program_Locations
+sub _get_argv_program_locations
 {
   my $self = shift;
   my %info = %{ shift @_ };
@@ -126,7 +136,7 @@ sub _Get_ARGV_Program_Locations
     else
     {
       my ($is_valid,$type,$version) = 
-        $self->_Program_Version_Is_Valid($program_name,$full_path,\%info);
+        $self->_program_version_is_valid($program_name,$full_path,\%info);
       
       unless($is_valid)
       {
@@ -144,10 +154,13 @@ sub _Get_ARGV_Program_Locations
 
 # ---------------------------------------------------------------------------
 
-sub _Prompt_User_For_Program_Locations
+sub _prompt_user_for_program_locations
 {
   my $self = shift;
   my %info = %{ shift @_ };
+
+  # Force the include inc/Module/Install/Can.pm message to appear early
+  $self->can_run();
 
   print "Enter the full path, or \"none\" for none.\n";
 
@@ -211,7 +224,7 @@ sub _Prompt_User_For_Program_Locations
     else
     {
       my ($is_valid,$type,$version) = 
-        $self->_Program_Version_Is_Valid($program_name,$choice,\%info);
+        $self->_program_version_is_valid($program_name,$choice,\%info);
       
       if(!$is_valid)
       {
@@ -236,7 +249,7 @@ sub _Prompt_User_For_Program_Locations
 
 # ---------------------------------------------------------------------------
 
-sub _Program_Version_Is_Valid
+sub _program_version_is_valid
 {
   my $self = shift;
   my $program_name = shift;
@@ -253,7 +266,7 @@ sub _Program_Version_Is_Valid
 
       next TYPE unless defined $version;
 
-      if ($self->Version_Matches_Range($version,
+      if ($self->version_matches_range($version,
         $info{$program_name}{'types'}{$type}{'numbers'}))
       {
         return (1,$type,$version);
@@ -278,7 +291,7 @@ sub _Program_Version_Is_Valid
 
 # ---------------------------------------------------------------------------
 
-sub Version_Matches_Range
+sub version_matches_range
 {
   my $self = shift;
   my $version = shift;
@@ -346,7 +359,7 @@ sub _Make_Absolute
 
 # ---------------------------------------------------------------------------
 
-sub Get_GNU_Version
+sub get_gnu_version
 {
   my $self = shift;
   my $program = shift;
@@ -378,7 +391,7 @@ sub Get_GNU_Version
 
 # ---------------------------------------------------------------------------
 
-sub Get_Bzip2_Version
+sub get_bzip2_version
 {
   my $self = shift;
   my $program = shift;
@@ -395,5 +408,4 @@ sub Get_Bzip2_Version
 
 # ---------------------------------------------------------------------------
 
-#line 617
-
+#line 632
